@@ -52,6 +52,10 @@ npm start
 ```bash
 npm run dist
 ```
+либо
+```bash
+npx electron-builder --win
+```
 
 После завершения сборки готовые файлы появятся в папке `dist`.
 
