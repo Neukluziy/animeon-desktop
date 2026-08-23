@@ -1,0 +1,48 @@
+html.tray-menu, .tray-menu body {
+  background: transparent;
+  overflow: hidden;
+}
+
+.tm-card {
+  position: absolute;
+  inset: 6px;
+  display: flex;
+  flex-direction: column;
+  padding: 8px;
+  border-radius: 15px;
+  background: linear-gradient(145deg, rgba(27,22,38,.84), rgba(10,9,15,.76));
+  border: 1px solid rgba(255,255,255,.10);
+  box-shadow: 0 24px 70px rgba(0,0,0,.58), inset 0 1px 0 rgba(255,255,255,.10), 0 0 30px rgba(var(--a-rgb),.16);
+  backdrop-filter: blur(28px) saturate(155%);
+  -webkit-backdrop-filter: blur(28px) saturate(155%);
+  overflow: hidden;
+}
+.tm-card::before {
+  content: '';
+  position: absolute;
+  width: 170px; height: 120px;
+  left: -45px; top: -70px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(var(--a-rgb),.28), transparent 70%);
+  filter: blur(8px);
+  pointer-events: none;
+}
+.tm-head {
+  display: flex; align-items: center; gap: 7px; padding: 2px 3px 7px;
+  border-bottom: 1px solid rgba(255,255,255,.08);
+  font-size: 10px; font-weight: 800; letter-spacing: 2px; color: var(--text);
+}
+.tm-head img { width: 18px; height: 18px; object-fit: contain; filter: drop-shadow(0 0 8px rgba(var(--a-rgb),.42)); }
+.tm-head em { font-style: normal; color: var(--accent-light); }
+.tm-ver { margin-left: auto; font-style: normal; font-size: 8px; letter-spacing: .2px; color: var(--text-dim); }
+.tm-item {
+  display: flex; align-items: center; gap: 8px; width: 100%; height: 32px; min-height: 32px;
+  margin-top: 4px; padding: 0 8px; border: 1px solid transparent; border-radius: 9px;
+  color: var(--text); font-size: 11px; font-weight: 600; justify-content: flex-start;
+  background: rgba(255,255,255,.025); transition: .16s ease;
+}
+.tm-item svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; opacity: .9; }
+.tm-item:hover { background: linear-gradient(100deg, rgba(var(--a-rgb),.22), rgba(var(--a-rgb),.07)); border-color: rgba(var(--a-rgb),.25); color: #fff; transform: translateY(-1px); box-shadow: 0 7px 22px rgba(var(--a-rgb),.12); }
+.tm-item:active { transform: scale(.98); }
+.tm-item.danger:hover { background: rgba(255,70,90,.12); border-color: rgba(255,90,110,.2); color: #ff8b98; box-shadow: 0 7px 22px rgba(255,60,80,.10); }
+.tm-sep { height: 1px; margin: 6px 2px 1px; background: rgba(255,255,255,.08); }

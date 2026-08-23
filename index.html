@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; script-src 'self'" />
+  <title>AnimeOn</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="edge-glow" aria-hidden="true"></div>
+  <div id="poster-wall" aria-hidden="true"></div>
+  <div id="splash">
+    <div class="s-logo"><img src="assets/logo.png" alt="" draggable="false"></div>
+    <div class="s-title">ANIME<em>ON</em></div>
+    <div class="s-bar"><i></i></div>
+    <div class="s-pct">0%</div>
+  </div>
+
+  <div id="site-picker">
+    <div class="picker-card">
+      <img class="pk-logo" src="assets/logo.png" alt="" draggable="false">
+      <div class="pk-brand">ANIME<em>ON</em></div>
+      <h1>Выбери адрес</h1>
+      <p class="pk-sub">Если один адрес не открывается, попробуй второй</p>
+
+      <div class="pk-cards">
+        <button class="site-card" data-site="cc">
+          <span class="sc-ico">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.8 2.6 4 5.7 4 9s-1.2 6.4-4 9c-2.8-2.6-4-5.7-4-9s1.2-6.4 4-9z"/></svg>
+          </span>
+          <span class="sc-info"><b>animeon.cc</b><i>основной</i></span>
+          <span class="sc-mark"></span>
+        </button>
+        <button class="site-card" data-site="co">
+          <span class="sc-ico ru">RU</span>
+          <span class="sc-info"><b>v1.animeon.co</b><i>запасной</i></span>
+          <span class="sc-mark"></span>
+        </button>
+      </div>
+
+      <button id="btn-continue" class="pk-continue">Открыть</button>
+
+      <label class="remember-row">
+        <span class="switch">
+          <input type="checkbox" id="remember-pick">
+          <span class="sw-track"><span class="sw-knob"></span></span>
+        </span>
+        Запомнить и больше не спрашивать
+      </label>
+    </div>
+  </div>
+
+  <header id="titlebar">
+    <div class="brand">
+      <span class="brand-badge">
+        <img class="brand-mark" src="assets/logo.png" alt="" draggable="false">
+      </span>
+      <span class="brand-name">ANIME<em>ON</em></span>
+    </div>
+
+    <nav class="nav">
+      <button id="btn-back" title="Назад (Alt+←)">
+        <svg viewBox="0 0 24 24"><path d="M15.5 19l-7-7 7-7"/></svg>
+      </button>
+      <button id="btn-home" title="Главная">
+        <svg viewBox="0 0 24 24"><path d="M3 11.5L12 4l9 7.5"/><path d="M6 10v10h12V10"/></svg>
+      </button>
+      <button id="btn-fwd" title="Вперёд (Alt+→)">
+        <svg viewBox="0 0 24 24"><path d="M8.5 5l7 7-7 7"/></svg>
+      </button>
+      <button id="btn-reload" title="Обновить (F5)">
+        <svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5"/></svg>
+      </button>
+      <button id="btn-site" title="">
+        <svg viewBox="0 0 24 24"><path d="M17 4h3v3"/><path d="M20 7L14 13"/><path d="M7 20H4v-3"/><path d="M4 17l6-6"/></svg>
+      </button>
+    </nav>
+
+    <div class="drag-space"></div>
+
+    <div class="win-btns">
+      <button id="btn-hotkeys-main" title="Горячие клавиши">
+        <svg viewBox="0 0 24 24">
+          <rect x="3" y="5" width="18" height="14" rx="2"/>
+          <path d="M6 9h2M10 9h2M14 9h2M18 9h0M6 13h2M10 13h2M14 13h4"/>
+          <path d="M7 16h10"/>
+        </svg>
+      </button>
+      <button id="btn-settings" title="Настройки">
+        <svg viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+      </button>
+      <button id="btn-max" title="Развернуть / Свернуть в окно">
+        <svg class="ic-max" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>
+        <svg class="ic-restore" viewBox="0 0 24 24">
+          <rect x="5" y="8" width="11" height="11" rx="1.5"/>
+          <path d="M9 5h10v10" fill="none"/>
+        </svg>
+      </button>
+      <button id="btn-fs" title="Полный экран (F11)">
+        <svg viewBox="0 0 24 24">
+          <path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/>
+        </svg>
+      </button>
+      <button id="btn-close" class="danger" title="Закрыть">
+        <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <div id="error-screen">
+    <div class="error-card">
+      <div class="error-logo"><img src="assets/logo.png" alt="" draggable="false"></div>
+      <div class="error-title">Не получилось открыть</div>
+      <div class="error-sub" id="error-message">Не получилось открыть AnimeOn.</div>
+      <div class="error-actions">
+        <button id="btn-error-retry" class="ghost-btn accent">Повторить</button>
+        <button id="btn-error-mirror" class="ghost-btn">Другой адрес</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="settings">
+    <div class="sp-blob b1"></div>
+    <div class="sp-blob b2"></div>
+    <div class="settings-card">
+      <header class="st-head">
+        <img src="assets/logo.png" alt="" draggable="false">
+        <div class="st-titles">
+          <b>Настройки</b>
+          <i id="st-version"></i>
+        </div>
+        <button id="btn-close-settings" title="Закрыть (Esc)">
+          <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </header>
+
+      <div class="st-body">
+        <section class="st-section">
+          <div class="st-title">Тема</div>
+          <div class="themes">
+            <button class="theme-swatch" data-theme="violet" title="Фиолетовый"></button>
+            <button class="theme-swatch" data-theme="blue" title="Синий"></button>
+            <button class="theme-swatch" data-theme="cyan" title="Бирюзовый"></button>
+            <button class="theme-swatch" data-theme="sky" title="Небесный"></button>
+            <button class="theme-swatch" data-theme="indigo" title="Индиго"></button>
+            <button class="theme-swatch" data-theme="emerald" title="Изумрудный"></button>
+            <button class="theme-swatch" data-theme="green" title="Зелёный"></button>
+            <button class="theme-swatch" data-theme="lime" title="Лаймовый"></button>
+            <button class="theme-swatch" data-theme="yellow" title="Жёлтый"></button>
+            <button class="theme-swatch" data-theme="amber" title="Янтарный"></button>
+            <button class="theme-swatch" data-theme="orange" title="Оранжевый"></button>
+            <button class="theme-swatch" data-theme="red" title="Красный"></button>
+            <button class="theme-swatch" data-theme="rose" title="Розовый"></button>
+            <button class="theme-swatch" data-theme="pink" title="Розово-малиновый"></button>
+            <button class="theme-swatch" data-theme="fuchsia" title="Фуксия"></button>
+            <button class="theme-swatch" data-theme="slate" title="Серо-синий"></button>
+            <button class="theme-swatch" data-theme="gray" title="Серый"></button>
+          </div>
+          <p class="st-hint">Готовые цвета темы</p>
+        </section>
+
+        <section class="st-section">
+          <div class="st-title">Сайт</div>
+          <div class="pk-cards column">
+            <button class="site-card" data-site="cc">
+              <span class="sc-ico">
+                <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.8 2.6 4 5.7 4 9s-1.2 6.4-4 9c-2.8-2.6-4-5.7-4-9s1.2-6.4 4-9z"/></svg>
+              </span>
+              <span class="sc-info"><b>animeon.cc</b><i>основной</i></span>
+              <span class="sc-mark"></span>
+            </button>
+            <button class="site-card" data-site="co">
+              <span class="sc-ico ru">RU</span>
+              <span class="sc-info"><b>v1.animeon.co</b><i>запасной</i></span>
+              <span class="sc-mark"></span>
+            </button>
+          </div>
+          <div class="switch-row">
+            <div class="sw-text">
+              <b>Заходить сразу</b>
+              <i>Не спрашивать адрес при запуске</i>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="remember-settings">
+              <span class="sw-track"><span class="sw-knob"></span></span>
+            </label>
+          </div>
+          <p class="st-hint">Адрес можно поменять кнопками со стрелками сверху</p>
+        </section>
+
+
+
+        <section class="st-section">
+          <div class="st-title">Приложение</div>
+          <div class="switch-row">
+            <div class="sw-text">
+              <b>Запускать вместе с Windows</b>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="autostart-toggle">
+              <span class="sw-track"><span class="sw-knob"></span></span>
+            </label>
+          </div>
+          <div class="switch-row">
+            <div class="sw-text">
+              <b>Убирать в трей</b>
+              <i>При закрытии окно будет прятаться в трей</i>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="tray-toggle">
+              <span class="sw-track"><span class="sw-knob"></span></span>
+            </label>
+          </div>
+          <div class="switch-row">
+            <div class="sw-text">
+              <b>Скрывать верхнюю панель</b>
+              <i>Панель уезжает вверх, когда листаешь страницу вниз</i>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="autohide-toggle">
+              <span class="sw-track"><span class="sw-knob"></span></span>
+            </label>
+          </div>
+          <div class="switch-row">
+            <div class="sw-text">
+              <b>Компактная панель</b>
+              <i>Делает верхнюю панель меньше</i>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="compact-toggle">
+              <span class="sw-track"><span class="sw-knob"></span></span>
+            </label>
+          </div>
+          <div class="switch-row">
+            <div class="sw-text">
+              <b>Экономно ресурсов</b>
+              <i>Меньше анимаций и фоновой нагрузки</i>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="lowpower-toggle">
+              <span class="sw-track"><span class="sw-knob"></span></span>
+            </label>
+          </div>
+          <div class="switch-row">
+            <div class="sw-text">
+              <b>Восстанавливать страницу</b>
+              <i>Если страница зависнет, приложение попробует её перезапустить</i>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="autorecovery-toggle">
+              <span class="sw-track"><span class="sw-knob"></span></span>
+            </label>
+          </div>
+          <div class="switch-row">
+            <div class="sw-text">
+              <b>Спрашивать при закрытии</b>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="confirmclose-toggle">
+              <span class="sw-track"><span class="sw-knob"></span></span>
+            </label>
+          </div>
+          <div class="hotkeys-card-row">
+            <div class="sw-text">
+              <b>Горячие клавиши</b>
+              <i>Все сочетания клавиш, которые работают в приложении</i>
+            </div>
+            <button id="btn-hotkeys" class="ghost-btn">Посмотреть</button>
+          </div>
+          <div class="switch-row">
+            <div class="sw-text">
+              <b>Быстродействие</b>
+              <i>Меняет только работу самого приложения</i>
+            </div>
+            <select id="performance-select" class="perf-select">
+              <option value="performance">Быстро</option>
+              <option value="balanced">Обычно</option>
+              <option value="economy">Экономно</option>
+            </select>
+          </div>
+        </section>
+
+        <section class="st-section">
+          <div class="st-title">Дополнительно</div>
+          <div class="upd-btns">
+            <button id="btn-restart-webview" class="ghost-btn accent">Перезапустить страницу</button>
+            <button id="btn-clear-cache" class="ghost-btn">Очистить кэш</button>
+            <button id="btn-devtools" class="ghost-btn">DevTools</button>
+            <button id="btn-diagnostics" class="ghost-btn">Проверить приложение</button>
+          </div>
+          <pre id="diagnostics-output" class="diagnostics-output"></pre>
+        </section>
+
+        <section class="st-section">
+          <div class="st-title">Обновление</div>
+          <p class="st-hint" id="upd-status">Проверяю обновления…</p>
+          <div class="upd-btns">
+            <button id="btn-upd-get" class="ghost-btn accent hidden">Что нового и обновить</button>
+            <button id="btn-upd-check" class="ghost-btn">Проверить снова</button>
+          </div>
+        </section>
+
+        <section class="st-section">
+          <div class="st-title">Сайт</div>
+          <p class="about-text">
+            Весь контент живёт на сайте AnimeOn и принадлежит его команде.
+            Приложение не связано с ними официально.
+          </p>
+          <div class="link-list">
+            <button class="link-row" data-url="https://animeon.cc">
+              <span class="sc-ico small">
+                <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.8 2.6 4 5.7 4 9s-1.2 6.4-4 9c-2.8-2.6-4-5.7-4-9s1.2-6.4 4-9z"/></svg>
+              </span>
+              <span class="sc-info"><b>AnimeOn</b><i>animeon.cc</i></span>
+            </button>
+            <button class="link-row" data-url="https://t.me/animeon">
+              <span class="lr-ico">TG</span>
+              <span class="sc-info"><b>Telegram</b><i>t.me/animeon</i></span>
+            </button>
+          </div>
+        </section>
+
+        <section class="st-section">
+          <div class="st-title">Программа</div>
+          <p class="about-text">
+            Приложение сделал фанат для фанатов и не связано с командой AnimeOn.
+          </p>
+          <div class="link-list">
+            <button class="link-row" data-url="https://github.com/Neukluziy">
+              <span class="lr-ico">GH</span>
+              <span class="sc-info"><b>Автор</b><i>github.com/Neukluziy</i></span>
+            </button>
+            <button class="link-row" data-url="https://github.com/Neukluziy/animeon-desktop">
+              <span class="lr-ico">&lt;/&gt;</span>
+              <span class="sc-info"><b>Исходный код</b><i>github.com/Neukluziy/animeon-desktop</i></span>
+            </button>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+
+
+
+
+  <div id="hotkeys-modal" class="hotkeys-modal">
+    <div class="hotkeys-card">
+      <header class="st-head">
+        <div class="st-titles">
+          <b>Горячие клавиши</b>
+          <i>Быстрый доступ к функциям AnimeOn</i>
+        </div>
+        <button id="btn-close-hotkeys" title="Закрыть (Esc)">
+          <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </header>
+      <div class="hotkeys-body">
+        <div class="hotkeys-group">
+          <div class="hotkeys-group-title">Навигация</div>
+          <div class="hotkey-row"><span>Перезагрузить страницу</span><kbd>F5</kbd></div>
+          <div class="hotkey-row"><span>Перезагрузить страницу</span><kbd>Ctrl</kbd><b>+</b><kbd>R</kbd></div>
+          <div class="hotkey-row"><span>Назад</span><kbd>Alt</kbd><b>+</b><kbd>←</kbd></div>
+          <div class="hotkey-row"><span>Вперёд</span><kbd>Alt</kbd><b>+</b><kbd>→</kbd></div>
+        </div>
+        <div class="hotkeys-group">
+          <div class="hotkeys-group-title">Масштаб</div>
+          <div class="hotkey-row"><span>Увеличить</span><kbd>Ctrl</kbd><b>+</b><kbd>+</kbd></div>
+          <div class="hotkey-row"><span>Уменьшить</span><kbd>Ctrl</kbd><b>+</b><kbd>−</kbd></div>
+          <div class="hotkey-row"><span>Сбросить масштаб</span><kbd>Ctrl</kbd><b>+</b><kbd>0</kbd></div>
+        </div>
+        <div class="hotkeys-group">
+          <div class="hotkeys-group-title">Окно и приложение</div>
+          <div class="hotkey-row"><span>Полный экран</span><kbd>F11</kbd></div>
+          <div class="hotkey-row"><span>Открыть DevTools</span><kbd>F12</kbd></div>
+          <div class="hotkey-row"><span>Открыть командное меню</span><kbd>Ctrl</kbd><b>+</b><kbd>K</kbd></div>
+          <div class="hotkey-row"><span>Показать AnimeOn</span><kbd>Ctrl</kbd><b>+</b><kbd>Alt</kbd><b>+</b><kbd>A</kbd></div>
+          <div class="hotkey-row"><span>Закрыть настройки / меню</span><kbd>Esc</kbd></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="offline-screen">
+    <div class="offline-card">
+      <div class="offline-logo"><img src="assets/logo.png" alt=""></div>
+      <b>Нет интернета</b>
+      <span>Не получилось открыть страницу. Проверь интернет и попробуй снова.</span>
+      <button id="offline-retry" class="ghost-btn accent">Повторить</button>
+    </div>
+  </div>
+
+  <div id="confirm-close-screen">
+    <div class="offline-card">
+      <div class="offline-logo"><img src="assets/logo.png" alt=""></div>
+      <b>Закрыть AnimeOn?</b>
+      <span>Программа закроется полностью.</span>
+      <div class="error-actions">
+        <button id="confirm-close-yes" class="ghost-btn accent">Закрыть</button>
+        <button id="confirm-close-no" class="ghost-btn">Отмена</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="command-palette">
+    <div class="command-card">
+      <div class="command-top"><span>Быстрые команды</span><kbd>Ctrl K</kbd></div>
+      <input id="command-input" autocomplete="off" placeholder="Что нужно сделать?">
+      <div id="command-list"></div>
+    </div>
+  </div>
+
+  <div id="progress"></div>
+
+  <div id="view-area">
+    <webview id="wv" allowpopups></webview>
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>
