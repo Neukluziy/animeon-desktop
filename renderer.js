@@ -43,6 +43,13 @@ const confirmNo = document.getElementById('confirm-close-no');
 const performanceSelect = document.getElementById('performance-select');
 const autoRecoveryToggle = document.getElementById('autorecovery-toggle');
 const confirmCloseToggle = document.getElementById('confirmclose-toggle');
+const closeBehaviorSelect = document.getElementById('close-behavior-select');
+const btnClearData = document.getElementById('btn-clear-data');
+const btnConnectionCheck = document.getElementById('btn-connection-check');
+const btnExportSettings = document.getElementById('btn-export-settings');
+const btnImportSettings = document.getElementById('btn-import-settings');
+const btnResetSettings = document.getElementById('btn-reset-settings');
+const toastStack = document.getElementById('toast-stack');
 const stVersion = document.getElementById('st-version');
 const updStatus = document.getElementById('upd-status');
 const btnUpdGet = document.getElementById('btn-upd-get');
@@ -111,16 +118,12 @@ function applyTheme(t, opts = {}) {
 
   if (t !== undefined) activeTheme = t;
 
-  // Всегда сначала сбрасываем старые inline-цвета, чтобы новый цвет
-  // не смешивался с предыдущей темой.
   resetThemeVars();
 
   document.documentElement.dataset.theme = activeTheme;
 
   themeSwatches.forEach((b) => b.classList.toggle('active', b.dataset.theme === activeTheme));
 
-  // Ночная яркость считается от исходного цвета каждый раз, а не
-  // затемняет переменные повторно при каждом клике.
   if (isNight()) {
     const cs = getComputedStyle(document.documentElement);
     const dim = (v, k) => v.split(',').map((c) => Math.round(parseFloat(c) * k)).join(',');
@@ -149,7 +152,7 @@ themeSwatches.forEach((sw) => {
 
 function activateSite(id, { save = true } = {}) {
   currentSite = id;
-  if (save) store('site', id);
+  if (save && rememberPick?.checked) store('site', id);
   document.querySelectorAll('[data-site]').forEach((el) => {
     const on = el.dataset.site === id;
     el.classList.toggle('selected', on);
@@ -193,8 +196,6 @@ btnContinue.addEventListener('click', () => {
   if (!currentSite) return;
   if (rememberPick.checked) store('remember', '1');
   picker.classList.add('hide');
-  // Keep the webview suspended until the picker has fully disappeared.
-  // This prevents the heavy webview compositor from fighting with the picker.
   setTimeout(() => {
     document.body.classList.remove('picker-visible');
     picker.remove();
@@ -210,19 +211,33 @@ btnContinue.addEventListener('click', () => {
 rememberPick.addEventListener('change', () => {
   rememberSettings.checked = rememberPick.checked;
   store('remember', rememberPick.checked ? '1' : '0');
+  if (!rememberPick.checked) store('site', null);
+  else if (currentSite) store('site', currentSite);
 });
 rememberSettings.addEventListener('change', () => {
   rememberPick.checked = rememberSettings.checked;
   store('remember', rememberSettings.checked ? '1' : '0');
+  if (!rememberSettings.checked) store('site', null);
+  else if (currentSite) store('site', currentSite);
 });
 autostartToggle.addEventListener('change', () => store('autostart', autostartToggle.checked));
-trayToggle.addEventListener('change', () => store('tray', trayToggle.checked));
+trayToggle.addEventListener('change', () => {
+  const enabled = trayToggle.checked;
+  store('tray', enabled);
+  if (enabled) {
+    store('closeBehavior', 'tray');
+    store('confirmClose', false);
+    if (closeBehaviorSelect) closeBehaviorSelect.value = 'tray';
+    if (confirmCloseToggle) confirmCloseToggle.checked = false;
+  }
+});
 autohideToggle.addEventListener('change', () => { store('autoHide', autohideToggle.checked); setChromeHidden(false); });
 compactToggle.addEventListener('change', () => { store('compact', compactToggle.checked); document.body.classList.toggle('compact-mode', compactToggle.checked); });
 lowPowerToggle.addEventListener('change', () => { store('lowPower', lowPowerToggle.checked); document.body.classList.toggle('low-power', lowPowerToggle.checked); });
 performanceSelect?.addEventListener('change', () => { store('performance', performanceSelect.value); window.native.setPerformance(performanceSelect.value); applyPerformance(performanceSelect.value); });
 autoRecoveryToggle?.addEventListener('change', () => store('autoRecovery', autoRecoveryToggle.checked));
-confirmCloseToggle?.addEventListener('change', () => store('confirmClose', confirmCloseToggle.checked));
+confirmCloseToggle?.addEventListener('change', () => { const v=confirmCloseToggle.checked; store('confirmClose', v); store('closeBehavior', v ? 'ask' : (store('closeBehavior') === 'ask' ? 'exit' : store('closeBehavior'))); if (closeBehaviorSelect) closeBehaviorSelect.value = store('closeBehavior') || (v ? 'ask' : 'exit'); });
+closeBehaviorSelect?.addEventListener('change', () => { store('closeBehavior', closeBehaviorSelect.value); store('confirmClose', closeBehaviorSelect.value === 'ask'); if (confirmCloseToggle) confirmCloseToggle.checked = closeBehaviorSelect.value === 'ask'; });
 
 function applyPerformance(mode) {
   document.body.dataset.performance = mode;
@@ -231,13 +246,36 @@ function applyPerformance(mode) {
 }
 
 btnRestartWebview?.addEventListener('click', () => { hideError(); wv.reload(); });
+function toast(message, type='ok') {
+  if (!toastStack) return;
+  const el = document.createElement('div'); el.className = `toast ${type}`; el.textContent = message;
+  toastStack.appendChild(el); requestAnimationFrame(() => el.classList.add('show'));
+  setTimeout(() => { el.classList.remove('show'); setTimeout(() => el.remove(), 220); }, 2600);
+}
 btnClearCache?.addEventListener('click', async () => {
   btnClearCache.disabled = true;
   const res = await window.native.clearCache();
   btnClearCache.disabled = false;
-  if (diagnosticsOutput) diagnosticsOutput.textContent = res?.ok ? 'Кэш очищен. Перезагружаю страницу…' : `Ошибка: ${res?.error || 'неизвестная ошибка'}`;
-  if (res?.ok) setTimeout(() => wv.reload(), 250);
+  if (res?.ok) { toast('Кэш очищен'); setTimeout(() => wv.reload(), 250); }
+  else toast(`Ошибка: ${res?.error || 'неизвестная ошибка'}`, 'error');
 });
+btnClearData?.addEventListener('click', async () => {
+  if (!confirm('Очистить данные сайта AnimeOn? Это может завершить текущую авторизацию.')) return;
+  btnClearData.disabled = true; const res = await window.native.clearSiteData(); btnClearData.disabled = false;
+  if (res?.ok) { toast('Данные сайта очищены'); setTimeout(() => wv.reload(), 250); }
+  else toast(`Ошибка: ${res?.error || 'неизвестная ошибка'}`, 'error');
+});
+btnConnectionCheck?.addEventListener('click', async () => {
+  btnConnectionCheck.disabled = true; if (diagnosticsOutput) diagnosticsOutput.textContent = 'Проверяю интернет и зеркала…';
+  const r = await window.native.connectionCheck(); btnConnectionCheck.disabled = false;
+  const lines = [`Интернет: ${r.internet ? 'доступен' : 'нет соединения'}`];
+  (r.results || []).forEach(x => lines.push(`${new URL(x.url).hostname}: ${x.ok ? 'доступен' : 'не отвечает'}${x.status ? ` · HTTP ${x.status}` : ''} · ${x.ms} мс`));
+  if (diagnosticsOutput) diagnosticsOutput.textContent = lines.join('\n');
+  toast(r.internet ? 'Соединение проверено' : 'Соединение недоступно', r.internet ? 'ok' : 'error');
+});
+btnExportSettings?.addEventListener('click', async () => { const r = await window.native.exportSettings(); if (r?.ok) toast('Настройки экспортированы'); else if (!r?.canceled) toast(r?.error || 'Не удалось экспортировать настройки', 'error'); });
+btnImportSettings?.addEventListener('click', async () => { const r = await window.native.importSettings(); if (!r?.ok) { if (!r?.canceled) toast(r?.error || 'Не удалось импортировать настройки', 'error'); return; } Object.assign(cfg, r.settings || {}); applyTheme(cfg.theme || 'violet', {skipSave:true}); rememberPick.checked=rememberSettings.checked=cfg.remember==='1'; autostartToggle.checked=!!cfg.autostart; trayToggle.checked=!!cfg.tray; compactToggle.checked=!!cfg.compact; lowPowerToggle.checked=cfg.lowPower!==false; autohideToggle.checked=cfg.autoHide!==false; if(performanceSelect) performanceSelect.value=cfg.performance||'balanced'; if(autoRecoveryToggle) autoRecoveryToggle.checked=cfg.autoRecovery!==false; if(closeBehaviorSelect) closeBehaviorSelect.value=cfg.closeBehavior|| (cfg.confirmClose?'ask':'exit'); if(confirmCloseToggle) confirmCloseToggle.checked=(closeBehaviorSelect?.value==='ask'); document.body.classList.toggle('compact-mode',!!cfg.compact); document.body.classList.toggle('low-power',cfg.lowPower!==false); applyPerformance(cfg.performance||'balanced'); toast('Настройки импортированы'); });
+btnResetSettings?.addEventListener('click', async () => { if (!confirm('Сбросить все настройки AnimeOn?')) return; const r=await window.native.resetSettings(); if(!r?.ok){toast(r?.error||'Не удалось сбросить настройки','error');return;} Object.assign(cfg,r.settings||{}); applyTheme('violet',{skipSave:true}); location.reload(); });
 btnDevtools?.addEventListener('click', () => window.native.toggleDevTools());
 btnDiagnostics?.addEventListener('click', async () => {
   if (!diagnosticsOutput) return;
@@ -381,36 +419,46 @@ window.addEventListener('keydown', (e) => {
 });
 
 let progVal = 0;
-let progTimer = null;
+let progTarget = 0;
+let progFrame = 0;
 
 function setProg(p) {
   progVal = p;
   if (splashBarFill) splashBarFill.style.width = p + '%';
   if (splashPct) splashPct.textContent = Math.round(p) + '%';
-  splash.style.setProperty('--p', (p / 100).toFixed(3));
+  splash?.style.setProperty('--p', (p / 100).toFixed(3));
+}
+
+function animateProgress(target) {
+  progTarget = Math.max(progTarget, target);
+  cancelAnimationFrame(progFrame);
+  const tick = () => {
+    const diff = progTarget - progVal;
+    if (diff <= 0.05) { setProg(progTarget); return; }
+    setProg(progVal + Math.max(.18, diff * .09));
+    progFrame = requestAnimationFrame(tick);
+  };
+  progFrame = requestAnimationFrame(tick);
 }
 
 function startSplashProgress() {
-  setProg(0);
-  clearInterval(progTimer);
-  progTimer = setInterval(() => {
-    setProg(Math.min(progVal + 1.5 + Math.random() * 5, 92));
-  }, 200);
+  progVal = 0; progTarget = 12; setProg(0);
+  animateProgress(12);
 }
 
 function finishSplashProgress() {
-  clearInterval(progTimer);
-  setProg(100);
+  progTarget = 100;
+  animateProgress(100);
 }
 
-function revealApp(delay = 400) {
+function revealApp(delay = 220) {
   if (booted) return;
   finishSplashProgress();
   setTimeout(() => {
     booted = true;
     document.body.classList.add('loaded');
-    splash.classList.add('hide');
-    setTimeout(() => splash && splash.remove(), 900);
+    splash?.classList.add('hide');
+    setTimeout(() => splash?.remove(), 720);
   }, delay);
 }
 
@@ -535,19 +583,27 @@ compactToggle.checked = !!store('compact');
 lowPowerToggle.checked = store('lowPower') !== false;
 if (performanceSelect) performanceSelect.value = store('performance') || 'balanced';
 if (autoRecoveryToggle) autoRecoveryToggle.checked = store('autoRecovery') !== false;
-if (confirmCloseToggle) confirmCloseToggle.checked = !!store('confirmClose');
+if (confirmCloseToggle) confirmCloseToggle.checked = store('closeBehavior') === 'ask' || (!!store('confirmClose') && !store('closeBehavior'));
+if (closeBehaviorSelect) closeBehaviorSelect.value = store('closeBehavior') || (store('confirmClose') ? 'ask' : 'exit');
 applyPerformance(performanceSelect?.value || 'balanced');
 document.body.classList.toggle('compact-mode', compactToggle.checked);
 document.body.classList.toggle('low-power', lowPowerToggle.checked);
 
 if (appInfo.version) stVersion.textContent = `AnimeOn Desktop · v${appInfo.version}`;
 
-const savedSite = SITES[store('site')] ? store('site') : null;
-activateSite(savedSite || 'cc', { save: false });
+const rememberSite = store('remember') === '1';
+const savedSite = rememberSite && SITES[store('site')] ? store('site') : null;
+if (savedSite) activateSite(savedSite, { save: false });
+else {
+  currentSite = null;
+  document.querySelectorAll('[data-site]').forEach((el) => {
+    el.classList.remove('selected', 'active');
+  });
+}
 
 startSplashProgress();
 
-if (store('remember') === '1' && savedSite) {
+if (rememberSite && savedSite) {
   picker.remove();
   openSite(savedSite);
 } else {

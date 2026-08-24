@@ -264,6 +264,17 @@
               <span class="sw-track"><span class="sw-knob"></span></span>
             </label>
           </div>
+          <div class="switch-row">
+            <div class="sw-text">
+              <b>При закрытии</b>
+              <i>Что делать при нажатии на крестик</i>
+            </div>
+            <select id="close-behavior-select" class="perf-select">
+              <option value="ask">Спрашивать</option>
+              <option value="tray">Убирать в трей</option>
+              <option value="exit">Выходить</option>
+            </select>
+          </div>
           <div class="hotkeys-card-row">
             <div class="sw-text">
               <b>Горячие клавиши</b>
@@ -289,8 +300,15 @@
           <div class="upd-btns">
             <button id="btn-restart-webview" class="ghost-btn accent">Перезапустить страницу</button>
             <button id="btn-clear-cache" class="ghost-btn">Очистить кэш</button>
-            <button id="btn-devtools" class="ghost-btn">DevTools</button>
+            <button id="btn-clear-data" class="ghost-btn">Очистить данные сайта</button>
+            <button id="btn-connection-check" class="ghost-btn">Проверить соединение</button>
             <button id="btn-diagnostics" class="ghost-btn">Проверить приложение</button>
+            <button id="btn-devtools" class="ghost-btn">DevTools</button>
+          </div>
+          <div class="upd-btns settings-tools">
+            <button id="btn-export-settings" class="ghost-btn">Экспорт настроек</button>
+            <button id="btn-import-settings" class="ghost-btn">Импорт настроек</button>
+            <button id="btn-reset-settings" class="ghost-btn danger-outline">Сбросить настройки</button>
           </div>
           <pre id="diagnostics-output" class="diagnostics-output"></pre>
         </section>
@@ -412,6 +430,8 @@
       <div id="command-list"></div>
     </div>
   </div>
+
+  <div id="toast-stack" aria-live="polite"></div>
 
   <div id="progress"></div>
 

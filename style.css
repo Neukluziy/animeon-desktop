@@ -347,7 +347,13 @@ body.loaded #wv {
     var(--bg);
   transition: opacity .7s ease, visibility .7s;
 }
-#splash.hide { opacity: 0; visibility: hidden; pointer-events: none; }
+#splash.hide { opacity: 0; visibility: hidden; pointer-events: none; transform: scale(1.012); }
+#splash > * { animation: splashItemIn .7s cubic-bezier(.16,1,.3,1) both; }
+.s-logo { animation-delay: .05s; }
+.s-title { animation-delay: .12s; }
+.s-bar { animation-delay: .18s; }
+.s-pct { animation-delay: .22s; }
+@keyframes splashItemIn { from { opacity: 0; transform: translateY(9px) scale(.985); } to { opacity: 1; transform: translateY(0) scale(1); } }
 
 .s-logo {
   width: 96px; height: 96px;
@@ -407,7 +413,7 @@ body.loaded #wv {
   border-radius: 3px;
   background: linear-gradient(90deg, rgb(var(--am-rgb)), rgb(var(--a-rgb)) 60%, rgb(var(--al-rgb)));
   box-shadow: 0 0 10px rgba(var(--a-rgb), .7);
-  transition: width .25s ease;
+  transition: width .45s cubic-bezier(.16,1,.3,1);
 }
 
 .s-pct {
@@ -1067,6 +1073,60 @@ body.compact-mode .nav { margin-left: 8px; }
 body.compact-mode button { height: 26px; }
 body.compact-mode .win-btns button { height: 100%; }
 
+/* Compact mode: keep About/link cards inside the available width */
+body.compact-mode .settings-card {
+  width: min(620px, calc(100vw - 24px));
+}
+body.compact-mode .st-body {
+  overflow-x: hidden;
+}
+body.compact-mode .link-list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  width: 100%;
+  gap: 7px;
+}
+body.compact-mode .link-row {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 7px 10px 7px 8px;
+  gap: 8px;
+  overflow: hidden;
+}
+body.compact-mode .link-row .lr-ico,
+body.compact-mode .link-row .sc-ico.small {
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+}
+body.compact-mode .link-row .sc-ico.small svg {
+  width: 15px;
+  height: 15px;
+}
+body.compact-mode .link-row .sc-info {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+body.compact-mode .link-row .sc-info b,
+body.compact-mode .link-row .sc-info i {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+body.compact-mode .link-row b { font-size: 12px; }
+body.compact-mode .link-row i { font-size: 10px; }
+body.compact-mode .about-text {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
 body.low-power #titlebar::before,
 body.low-power .sp-blob,
 body.low-power .poster,
@@ -1146,6 +1206,7 @@ body.tray-menu { --titlebar-h:0px; }
 }
 .hotkeys-modal.show { display: flex; animation: hotkeysFade .18s ease-out; }
 .hotkeys-card {
+  position: relative;
   width: min(620px, calc(100vw - 40px));
   max-height: min(760px, calc(100vh - 40px));
   overflow: hidden;
@@ -1154,6 +1215,16 @@ body.tray-menu { --titlebar-h:0px; }
   background: linear-gradient(145deg, rgba(18,14,31,.98), rgba(10,9,17,.98));
   box-shadow: 0 24px 80px rgba(0,0,0,.55), 0 0 50px rgba(var(--a-rgb),.12);
 }
+#btn-close-hotkeys {
+  margin-left: auto;
+  flex: 0 0 34px;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+}
+#btn-close-hotkeys svg { width: 17px; height: 17px; }
 .hotkeys-body {
   padding: 6px 22px 22px;
   overflow-y: auto;
@@ -1314,3 +1385,12 @@ body.picker-visible #site-picker .picker-card {
   will-change: auto !important;
   box-shadow: 0 14px 40px rgba(0,0,0,.45) !important;
 }
+
+
+.settings-tools { margin-top: 8px; }
+.danger-outline { border-color: rgba(255,80,100,.18) !important; color: #ff9aa6 !important; }
+.danger-outline:hover { background: rgba(255,70,90,.10) !important; border-color: rgba(255,90,110,.30) !important; }
+#toast-stack { position: fixed; right: 18px; bottom: 18px; z-index: 300; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+.toast { max-width: 340px; padding: 10px 14px; border-radius: 12px; border: 1px solid rgba(255,255,255,.09); background: rgba(18,15,25,.92); color: var(--text); box-shadow: 0 16px 45px rgba(0,0,0,.45), 0 0 24px rgba(var(--a-rgb),.10); backdrop-filter: blur(18px); font-size: 12px; transform: translateY(10px); opacity: 0; transition: .2s ease; }
+.toast.show { transform: translateY(0); opacity: 1; }
+.toast.error { border-color: rgba(255,90,110,.22); color: #ffb1bb; }
