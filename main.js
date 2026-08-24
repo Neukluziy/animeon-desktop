@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell, Tray, Notification, screen, globalShortcut, session } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, Tray, Notification, screen, globalShortcut, session, dialog } = require('electron');
 const { spawn } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
@@ -21,6 +21,7 @@ let config = {
   performance: 'balanced',
   lowPower: true,
   autoHide: true,
+  closeBehavior: 'ask',
 };
 
 try {
@@ -111,7 +112,11 @@ function createWindow() {
   win.setMenuBarVisibility(false);
   win.loadFile('index.html');
   if (ws.maximized) win.maximize();
-  const saveBounds = () => saveWindowState();
+  let boundsSaveTimer = null;
+  const saveBounds = () => {
+    clearTimeout(boundsSaveTimer);
+    boundsSaveTimer = setTimeout(() => saveWindowState(), 180);
+  };
   win.on('resize', saveBounds);
   win.on('move', saveBounds);
   win.on('unmaximize', saveBounds);
@@ -126,14 +131,22 @@ function createWindow() {
   win.on('leave-full-screen', () => win.webContents.send('fs-state', false));
 
   win.on('close', (e) => {
-    if (config.confirmClose && !quitting && !config.tray) {
+    if (!quitting && config.tray) {
+      e.preventDefault();
+      ensureTray();
+      win.hide();
+      return;
+    }
+    if (!quitting && config.closeBehavior === 'ask') {
       e.preventDefault();
       win.webContents.send('confirm-close');
       return;
     }
-    if (config.tray && !quitting) {
+    if (!quitting && config.closeBehavior === 'tray') {
       e.preventDefault();
+      ensureTray();
       win.hide();
+      return;
     }
     saveWindowState();
   });
@@ -268,14 +281,14 @@ function toggleTrayMenu() {
     trayMenuWin.hide();
     return;
   }
-  const [w, h] = [220, 224];
+  const [w, h] = [188, 166];
   const p = screen.getCursorScreenPoint();
   const wa = screen.getDisplayNearestPoint(p).workArea;
   trayMenuWin = new BrowserWindow({
     width: w,
     height: h,
     x: Math.max(wa.x + 4, Math.min(p.x - w / 2, wa.x + wa.width - w - 4)),
-    y: Math.max(wa.y + 4, p.y - h - 12),
+    y: Math.max(wa.y + 4, p.y - h - 8),
     frame: false,
     resizable: false,
     movable: false,
@@ -308,6 +321,7 @@ ipcMain.on('tray-action', (_, action) => {
   if (action === 'open') {
     showMainWindow();
   }
+  if (action === 'hide') { if (win) win.hide(); }
   if (action === 'settings' && win) {
     showMainWindow();
     win.webContents.send('open-settings');
@@ -376,6 +390,74 @@ ipcMain.handle('app:diagnostics', async () => {
     maximized: !!win?.isMaximized(),
     fullscreen: !!win?.isFullScreen(),
   };
+});
+
+ipcMain.handle('app:clear-site-data', async () => {
+  try {
+    await session.defaultSession.clearStorageData({
+      storages: ['appcache', 'cookies', 'filesystem', 'indexdb', 'localstorage', 'serviceworkers', 'websql', 'shadercache', 'cachestorage'],
+    });
+    return { ok: true };
+  } catch (e) { return { ok: false, error: String(e?.message || e) }; }
+});
+
+const EXPORT_KEYS = ['theme','custom','site','remember','notify','autostart','tray','compact','confirmClose','autoRecovery','performance','lowPower','autoHide','closeBehavior'];
+
+ipcMain.handle('settings:export', async () => {
+  try {
+    const { canceled, filePath } = await dialog.showSaveDialog(win, {
+      title: 'Экспорт настроек AnimeOn',
+      defaultPath: 'AnimeOn-settings.json',
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+    });
+    if (canceled || !filePath) return { ok: false, canceled: true };
+    const data = { app: 'AnimeOn Desktop', version: app.getVersion(), exportedAt: new Date().toISOString(), settings: Object.fromEntries(EXPORT_KEYS.map(k => [k, config[k]])) };
+    fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf8');
+    return { ok: true, filePath };
+  } catch (e) { return { ok: false, error: String(e?.message || e) }; }
+});
+
+ipcMain.handle('settings:import', async () => {
+  try {
+    const { canceled, filePaths } = await dialog.showOpenDialog(win, {
+      title: 'Импорт настроек AnimeOn',
+      properties: ['openFile'],
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+    });
+    if (canceled || !filePaths?.[0]) return { ok: false, canceled: true };
+    const raw = JSON.parse(fs.readFileSync(filePaths[0], 'utf8'));
+    const incoming = raw?.settings && typeof raw.settings === 'object' ? raw.settings : raw;
+    const patch = {};
+    for (const k of EXPORT_KEYS) if (Object.prototype.hasOwnProperty.call(incoming, k)) patch[k] = incoming[k];
+    if (patch.theme && !['violet','blue','cyan','sky','indigo','emerald','green','lime','yellow','amber','orange','red','rose','pink','fuchsia','slate','gray','custom'].includes(patch.theme)) delete patch.theme;
+    if (patch.site && !['cc','co'].includes(patch.site)) delete patch.site;
+    if (patch.performance && !['performance','balanced','economy'].includes(patch.performance)) delete patch.performance;
+    if (patch.closeBehavior && !['exit','tray','ask'].includes(patch.closeBehavior)) delete patch.closeBehavior;
+    for (const k of ['remember','autostart','tray','compact','confirmClose','autoRecovery','lowPower','autoHide']) if (k in patch) patch[k] = !!patch[k] || patch[k] === '1';
+    Object.assign(config, patch); saveConfig(); applySideEffects(patch);
+    return { ok: true, settings: Object.fromEntries(EXPORT_KEYS.map(k => [k, config[k]])) };
+  } catch (e) { return { ok: false, error: 'Не удалось импортировать файл: ' + String(e?.message || e) }; }
+});
+
+ipcMain.handle('settings:reset', async () => {
+  try {
+    const defaults = { theme:'violet', custom:'#8b5cf6', site:'', remember:'0', notify:false, autostart:false, tray:false, compact:false, confirmClose:false, autoRecovery:true, performance:'balanced', lowPower:true, autoHide:true, closeBehavior:'ask' };
+    Object.assign(config, defaults); saveConfig(); applySideEffects({ autostart:true, tray:true });
+    return { ok: true, settings: config };
+  } catch (e) { return { ok:false, error:String(e?.message || e) }; }
+});
+
+ipcMain.handle('app:connection-check', async () => {
+  const urls = ['https://animeon.cc/', 'https://v1.animeon.co/'];
+  const results = [];
+  for (const url of urls) {
+    const started = Date.now();
+    try {
+      const res = await fetch(url, { method: 'HEAD', redirect: 'follow', signal: AbortSignal.timeout(8000), headers: { 'User-Agent': 'AnimeOn-Desktop' } });
+      results.push({ url, ok: res.ok || res.status < 500, status: res.status, ms: Date.now()-started });
+    } catch (e) { results.push({ url, ok:false, status:0, ms:Date.now()-started, error:String(e?.message || e) }); }
+  }
+  return { internet: results.some(r => r.ok), results };
 });
 
 ipcMain.handle('app:clear-cache', async () => {
@@ -596,13 +678,18 @@ ipcMain.on('taskbar-progress', (_, value) => {
 });
 
 ipcMain.on('app:info', (e) => {
-  e.returnValue = { version: app.getVersion() };
+  e.returnValue = { version: app.getVersion(), name: 'AnimeOn Desktop', electron: process.versions.electron };
 });
 
 app.whenReady().then(() => {
   saveConfig();
   createWindow();
   ensureTray();
+
+  setTimeout(() => {
+    checkUpdate().catch(() => {});
+  }, 1200);
+
   if (process.argv.includes('--settings')) setTimeout(() => win?.webContents.send('open-settings'), 900);
   if (process.argv.includes('--reload')) setTimeout(() => win?.webContents.send('restart-webview'), 1200);
   globalShortcut.register('Control+Alt+A', () => showMainWindow());
