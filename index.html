@@ -75,6 +75,20 @@
       <button id="btn-site" title="">
         <svg viewBox="0 0 24 24"><path d="M17 4h3v3"/><path d="M20 7L14 13"/><path d="M7 20H4v-3"/><path d="M4 17l6-6"/></svg>
       </button>
+      <div class="volume-wrap">
+        <button id="btn-volume" title="Громкость">
+          <svg viewBox="0 0 24 24"><path d="M4 10v4h4l5 4V6l-5 4H4z"/><path d="M17 9a5 5 0 0 1 0 6"/><path d="M19.5 6.5a8.5 8.5 0 0 1 0 11"/></svg>
+        </button>
+        <div id="volume-panel">
+          <div class="volume-head"><span>Громкость</span><b id="volume-value">100%</b></div>
+          <input id="volume-slider" type="range" min="0" max="200" value="100" aria-label="Громкость">
+          <div class="volume-actions">
+            <button id="volume-minus" title="Тише">−</button>
+            <button id="volume-mute" title="Выключить звук">Без звука</button>
+            <button id="volume-plus" title="Громче">+</button>
+          </div>
+        </div>
+      </div>
     </nav>
 
     <div class="drag-space"></div>
@@ -139,8 +153,8 @@
       </header>
 
       <div class="st-body">
-        <section class="st-section">
-          <div class="st-title">Тема</div>
+        <section class="st-section settings-group-card" data-settings-group="view">
+          <div class="st-title">Внешний вид и просмотр</div>
           <div class="themes">
             <button class="theme-swatch" data-theme="violet" title="Фиолетовый"></button>
             <button class="theme-swatch" data-theme="blue" title="Синий"></button>
@@ -163,7 +177,7 @@
           <p class="st-hint">Готовые цвета темы</p>
         </section>
 
-        <section class="st-section">
+        <section class="st-section settings-group-card" data-settings-group="view">
           <div class="st-title">Сайт</div>
           <div class="pk-cards column">
             <button class="site-card" data-site="cc">
@@ -194,8 +208,8 @@
 
 
 
-        <section class="st-section">
-          <div class="st-title">Приложение</div>
+        <section class="st-section settings-group-card" data-settings-group="app">
+          <div class="st-title">Поведение приложения</div>
           <div class="switch-row">
             <div class="sw-text">
               <b>Запускать вместе с Windows</b>
@@ -232,6 +246,16 @@
             </div>
             <label class="switch">
               <input type="checkbox" id="compact-toggle">
+              <span class="sw-track"><span class="sw-knob"></span></span>
+            </label>
+          </div>
+          <div class="switch-row">
+            <div class="sw-text">
+              <b>Поверх всех окон</b>
+              <i>Приложение не будет прятаться за другими окнами</i>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="alwaysontop-toggle">
               <span class="sw-track"><span class="sw-knob"></span></span>
             </label>
           </div>
@@ -295,38 +319,55 @@
           </div>
         </section>
 
-        <section class="st-section">
-          <div class="st-title">Дополнительно</div>
-          <div class="upd-btns">
-            <button id="btn-restart-webview" class="ghost-btn accent">Перезапустить страницу</button>
-            <button id="btn-clear-cache" class="ghost-btn">Очистить кэш</button>
-            <button id="btn-clear-data" class="ghost-btn">Очистить данные сайта</button>
-            <button id="btn-connection-check" class="ghost-btn">Проверить соединение</button>
-            <button id="btn-diagnostics" class="ghost-btn">Проверить приложение</button>
-            <button id="btn-devtools" class="ghost-btn">DevTools</button>
+        <section class="st-section settings-group-card" data-settings-group="service">
+          <div class="st-title">Проверка, обслуживание и обновление</div>
+          <div class="settings-subgroup">
+            <div class="settings-subtitle">Страница</div>
+            <div class="settings-action-grid">
+              <button id="btn-restart-webview" class="ghost-btn accent">Перезапустить страницу</button>
+              <button id="btn-reset-webview-state" class="ghost-btn">Сбросить страницу</button>
+            </div>
           </div>
-          <div class="upd-btns settings-tools">
-            <button id="btn-export-settings" class="ghost-btn">Экспорт настроек</button>
-            <button id="btn-import-settings" class="ghost-btn">Импорт настроек</button>
-            <button id="btn-reset-settings" class="ghost-btn danger-outline">Сбросить настройки</button>
+          <div class="settings-subgroup">
+            <div class="settings-subtitle">Проверка</div>
+            <div class="settings-action-grid">
+              <button id="btn-check-all" class="ghost-btn">Проверить всё</button>
+              <button id="btn-connection-check" class="ghost-btn">Проверить соединение</button>
+            </div>
+            <pre id="diagnostics-output" class="diagnostics-output"></pre>
           </div>
-          <pre id="diagnostics-output" class="diagnostics-output"></pre>
+          <div class="settings-subgroup">
+            <div class="settings-subtitle">Данные и инструменты</div>
+            <div class="settings-action-grid">
+              <button id="btn-clear-cache" class="ghost-btn">Очистить кэш</button>
+              <button id="btn-clear-data" class="ghost-btn">Очистить данные сайта</button>
+              <button id="btn-open-data-folder" class="ghost-btn">Папка данных</button>
+              <button id="btn-devtools" class="ghost-btn">DevTools</button>
+            </div>
+          </div>
+          <div class="settings-subgroup">
+            <div class="settings-subtitle">Настройки</div>
+            <div class="settings-action-grid">
+              <button id="btn-export-settings" class="ghost-btn">Экспорт</button>
+              <button id="btn-import-settings" class="ghost-btn">Импорт</button>
+              <button id="btn-reset-settings" class="ghost-btn danger-outline">Сбросить всё</button>
+            </div>
+          </div>
+          <div class="settings-subgroup service-update">
+            <div class="settings-subtitle">Обновление</div>
+            <p class="st-hint" id="upd-status">Проверяю обновления…</p>
+            <div class="settings-action-grid">
+              <button id="btn-upd-get" class="ghost-btn accent hidden">Что нового и обновить</button>
+              <button id="btn-upd-check" class="ghost-btn">Проверить снова</button>
+              <button id="btn-upd-open-release" class="ghost-btn hidden">Открыть релиз</button>
+            </div>
+          </div>
         </section>
 
-        <section class="st-section">
-          <div class="st-title">Обновление</div>
-          <p class="st-hint" id="upd-status">Проверяю обновления…</p>
-          <div class="upd-btns">
-            <button id="btn-upd-get" class="ghost-btn accent hidden">Что нового и обновить</button>
-            <button id="btn-upd-check" class="ghost-btn">Проверить снова</button>
-          </div>
-        </section>
-
-        <section class="st-section">
-          <div class="st-title">Сайт</div>
+        <section class="st-section settings-group-card" data-settings-group="app">
+          <div class="st-title">О приложении</div>
           <p class="about-text">
-            Весь контент живёт на сайте AnimeOn и принадлежит его команде.
-            Приложение не связано с ними официально.
+            Весь контент принадлежит ребятам из AnimeOn. Наше приложение - это просто неофициальное приложение, мы никак не связаны с их командой.
           </p>
           <div class="link-list">
             <button class="link-row" data-url="https://animeon.cc">
@@ -342,10 +383,10 @@
           </div>
         </section>
 
-        <section class="st-section">
-          <div class="st-title">Программа</div>
+        <section class="st-section settings-group-card" data-settings-group="app">
+          <div class="st-title">Исходный код</div>
           <p class="about-text">
-            Приложение сделал фанат для фанатов и не связано с командой AnimeOn.
+            Это неофициальный проект. Приложение никак не связано с командой AnimeOn, а весь контент принадлежит им.
           </p>
           <div class="link-list">
             <button class="link-row" data-url="https://github.com/Neukluziy">
@@ -370,35 +411,17 @@
       <header class="st-head">
         <div class="st-titles">
           <b>Горячие клавиши</b>
-          <i>Быстрый доступ к функциям AnimeOn</i>
+          <i>Настрой под себя и не лезь каждый раз в меню</i>
         </div>
         <button id="btn-close-hotkeys" title="Закрыть (Esc)">
           <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
         </button>
       </header>
-      <div class="hotkeys-body">
-        <div class="hotkeys-group">
-          <div class="hotkeys-group-title">Навигация</div>
-          <div class="hotkey-row"><span>Перезагрузить страницу</span><kbd>F5</kbd></div>
-          <div class="hotkey-row"><span>Перезагрузить страницу</span><kbd>Ctrl</kbd><b>+</b><kbd>R</kbd></div>
-          <div class="hotkey-row"><span>Назад</span><kbd>Alt</kbd><b>+</b><kbd>←</kbd></div>
-          <div class="hotkey-row"><span>Вперёд</span><kbd>Alt</kbd><b>+</b><kbd>→</kbd></div>
-        </div>
-        <div class="hotkeys-group">
-          <div class="hotkeys-group-title">Масштаб</div>
-          <div class="hotkey-row"><span>Увеличить</span><kbd>Ctrl</kbd><b>+</b><kbd>+</kbd></div>
-          <div class="hotkey-row"><span>Уменьшить</span><kbd>Ctrl</kbd><b>+</b><kbd>−</kbd></div>
-          <div class="hotkey-row"><span>Сбросить масштаб</span><kbd>Ctrl</kbd><b>+</b><kbd>0</kbd></div>
-        </div>
-        <div class="hotkeys-group">
-          <div class="hotkeys-group-title">Окно и приложение</div>
-          <div class="hotkey-row"><span>Полный экран</span><kbd>F11</kbd></div>
-          <div class="hotkey-row"><span>Открыть DevTools</span><kbd>F12</kbd></div>
-          <div class="hotkey-row"><span>Открыть командное меню</span><kbd>Ctrl</kbd><b>+</b><kbd>K</kbd></div>
-          <div class="hotkey-row"><span>Показать AnimeOn</span><kbd>Ctrl</kbd><b>+</b><kbd>Alt</kbd><b>+</b><kbd>A</kbd></div>
-          <div class="hotkey-row"><span>Закрыть настройки / меню</span><kbd>Esc</kbd></div>
-        </div>
+      <div class="hotkeys-toolbar">
+        <span>Нажмите «Изменить» и введите новую комбинацию клавиш.</span>
+        <button id="btn-hotkeys-reset" class="ghost-btn">Сбросить</button>
       </div>
+      <div id="hotkeys-list" class="hotkeys-body"></div>
     </div>
   </div>
 
@@ -430,6 +453,8 @@
       <div id="command-list"></div>
     </div>
   </div>
+
+  <div id="media-overlay" aria-live="polite"><span id="media-overlay-icon"></span><b id="media-overlay-text"></b></div>
 
   <div id="toast-stack" aria-live="polite"></div>
 

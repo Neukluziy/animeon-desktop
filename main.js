@@ -4,7 +4,8 @@ const path = require('node:path');
 const fs = require('node:fs');
 
 const SITE_RE = /^https?:\/\/([a-z0-9-]+\.)*animeon\.(co|cc)\//i;
-const AUTH_RE = /(accounts\.google|apis\.google|googleusercontent|oauth\.telegram|telegram\.org|t\.me)/i;
+const AUTH_RE = /(accounts\.google|apis\.google|googleusercontent|oauth\.telegram|telegram\.org)/i;
+const TELEGRAM_RE = /^https?:\/\/(?:www\.)?(?:t\.me|telegram\.me)\//i;
 
 const configPath = path.join(app.getPath('userData'), 'config.json');
 let config = {
@@ -22,6 +23,8 @@ let config = {
   lowPower: true,
   autoHide: true,
   closeBehavior: 'ask',
+  alwaysOnTop: false,
+  hotkeys: {},
 };
 
 try {
@@ -37,9 +40,11 @@ function saveConfig() {
 
 function applySideEffects(patch) {
   if ('autostart' in patch) {
-    try { app.setLoginItemSettings({ openAtLogin: !!config.autostart }); } catch {}
+    try { app.setLoginItemSettings({ openAtLogin: !!config.autostart, path: process.execPath, args: [] }); } catch {}
   }
   if ('tray' in patch) ensureTray();
+  if ('alwaysOnTop' in patch && win && !win.isDestroyed()) win.setAlwaysOnTop(!!config.alwaysOnTop);
+  if ('hotkeys' in patch) registerGlobalHotkeys();
 }
 
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
@@ -54,6 +59,9 @@ let win = null;
 let quitting = false;
 let tray = null;
 let trayMenuWin = null;
+let telegramWin = null;
+let siteWc = null;
+let volumeState = { volume: 100, muted: false };
 
 app.on('second-instance', (_, argv) => {
   if (!win) return;
@@ -84,6 +92,73 @@ function saveWindowState() {
   } catch {}
 }
 
+function openTelegramExternal(url) {
+  if (!url) return;
+  if (/^tg:/i.test(url)) {
+    try { shell.openExternal(url).catch?.(() => {}); } catch {}
+    return;
+  }
+  if (!TELEGRAM_RE.test(url)) return;
+  createTelegramWindow(url);
+}
+
+function createTelegramWindow(url) {
+  if (telegramWin && !telegramWin.isDestroyed()) {
+    telegramWin.show();
+    telegramWin.focus();
+    if (url && telegramWin.webContents.getURL() !== url) telegramWin.loadURL(url);
+    return;
+  }
+  telegramWin = new BrowserWindow({
+    width: 520,
+    height: 760,
+    minWidth: 420,
+    minHeight: 620,
+    parent: win && !win.isDestroyed() ? win : undefined,
+    modal: false,
+    show: false,
+    backgroundColor: '#111111',
+    icon: path.join(__dirname, 'assets', 'logo.ico'),
+    title: 'Telegram — AnimeOn',
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+      spellcheck: false,
+    },
+  });
+  telegramWin.setMenuBarVisibility(false);
+  telegramWin.once('ready-to-show', () => {
+    if (!telegramWin || telegramWin.isDestroyed()) return;
+    telegramWin.show();
+    telegramWin.focus();
+  });
+  telegramWin.webContents.setWindowOpenHandler(({ url: childUrl }) => {
+    if (/^tg:/i.test(childUrl)) {
+      try { shell.openExternal(childUrl).catch?.(() => {}); } catch {}
+      return { action: 'deny' };
+    }
+    if (TELEGRAM_RE.test(childUrl)) {
+      telegramWin.loadURL(childUrl);
+      return { action: 'deny' };
+    }
+    if (/^https?:\/\//i.test(childUrl)) {
+      try { shell.openExternal(childUrl).catch?.(() => {}); } catch {}
+      return { action: 'deny' };
+    }
+    return { action: 'deny' };
+  });
+  telegramWin.webContents.on('will-navigate', (event, targetUrl) => {
+    if (/^tg:/i.test(targetUrl)) {
+      event.preventDefault();
+      try { shell.openExternal(targetUrl).catch?.(() => {}); } catch {}
+      return;
+    }
+  });
+  telegramWin.on('closed', () => { telegramWin = null; });
+  telegramWin.loadURL(url);
+}
+
 function createWindow() {
   const ws = loadWindowState();
   win = new BrowserWindow({
@@ -110,6 +185,7 @@ function createWindow() {
 
   win.once('ready-to-show', () => win.show());
   win.setMenuBarVisibility(false);
+  win.setAlwaysOnTop(!!config.alwaysOnTop);
   win.loadFile('index.html');
   if (ws.maximized) win.maximize();
   let boundsSaveTimer = null;
@@ -154,6 +230,7 @@ function createWindow() {
   setupJumpList();
 
   win.webContents.on('did-attach-webview', (_, wc) => {
+    siteWc = wc;
     try { wc.setBackgroundThrottling(true); } catch {}
     try { wc.setVisualZoomLevelLimits(0.5, 3); } catch {}
     wc.on('render-process-gone', () => {
@@ -168,7 +245,19 @@ function createWindow() {
         if (Array.isArray(imgs) && imgs.length) win?.webContents.send('mirror-posters', imgs);
       } catch {}
     });
+    wc.on('did-frame-finish-load', () => { applyVolumeToGuest().catch(() => {}); });
+    wc.on('will-navigate', (event, url) => {
+      if (TELEGRAM_RE.test(url) || /^tg:/i.test(url)) {
+        event.preventDefault();
+        openTelegramExternal(url);
+      }
+    });
     wc.setWindowOpenHandler(({ url }) => {
+      if (TELEGRAM_RE.test(url)) {
+        openTelegramExternal(url);
+        return { action: 'deny' };
+      }
+
       const isAuth = AUTH_RE.test(url) || /\/(login|signin|auth|oauth)/i.test(url);
 
       if (isAuth) {
@@ -188,23 +277,46 @@ function createWindow() {
         wc.loadURL(url);
         return { action: 'deny' };
       }
-      if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+      if (/^tg:/i.test(url)) {
+        openTelegramExternal(url);
+        return { action: 'deny' };
+      }
+      if (/^https?:\/\//i.test(url)) shell.openExternal(url).catch?.(() => {});
       return { action: 'deny' };
     });
 
     wc.on('did-create-window', (childWin) => {
       let sawAuth = false;
       const checkNav = (_, u) => {
-        if (AUTH_RE.test(u)) sawAuth = true;
+        if (AUTH_RE.test(u) || /\/(login|signin|auth|oauth|telegram)/i.test(u)) sawAuth = true;
         else if (SITE_RE.test(u) && sawAuth) {
           setTimeout(() => {
-            childWin.close();
+            if (!childWin.isDestroyed()) childWin.close();
             wc.reload();
-          }, 600);
+          }, 700);
         }
       };
       childWin.webContents.on('did-navigate', checkNav);
       childWin.webContents.on('did-navigate-in-page', checkNav);
+      childWin.webContents.setWindowOpenHandler(({ url }) => {
+        if (TELEGRAM_RE.test(url)) {
+          shell.openExternal(url).catch?.(() => {});
+          return { action: 'deny' };
+        }
+        if (AUTH_RE.test(url) || /\/(login|signin|auth|oauth|telegram)/i.test(url)) return { action: 'allow' };
+        if (SITE_RE.test(url)) { wc.loadURL(url); return { action: 'deny' }; }
+        if (/^tg:/i.test(url)) {
+          openTelegramExternal(url);
+          return { action: 'deny' };
+        }
+        if (/^https?:\/\//i.test(url)) { shell.openExternal(url).catch?.(() => {}); return { action: 'deny' }; }
+        return { action: 'deny' };
+      });
+      childWin.on('closed', () => {
+        if (sawAuth && !wc.isDestroyed()) {
+          setTimeout(() => { try { wc.reload(); } catch {} }, 500);
+        }
+      });
     });
 
     wc.on('before-input-event', (e, input) => {
@@ -230,6 +342,198 @@ function createWindow() {
       else if (input.alt && input.key === 'ArrowRight') { wc.goForward(); e.preventDefault(); }
     });
   });
+}
+
+function getGuestFrames() {
+  const guest = siteWc;
+  if (!guest || guest.isDestroyed()) return [];
+  try {
+    return guest.mainFrame.framesInSubtree.filter(frame => frame && !frame.isDestroyed());
+  } catch {
+    return [];
+  }
+}
+
+async function executeGuest(script, userGesture = false) {
+  const frames = getGuestFrames();
+  if (!frames.length) return null;
+  const results = await Promise.all(frames.map(frame => {
+    try { return frame.executeJavaScript(script, userGesture).catch(() => null); } catch { return null; }
+  }));
+  return results.find(result => result !== null && result !== undefined) ?? null;
+}
+
+async function applyVolumeToGuest() {
+  const state = volumeState;
+  const script = `(() => {
+    const videos = Array.from(document.querySelectorAll('video'));
+    if (!videos.length) return false;
+    const level = ${state.volume};
+    const muted = ${!!state.muted};
+    window.__animeonVolume = level;
+    for (const video of videos) {
+      try {
+        if (!video.__animeonGainContext) {
+          const Ctx = window.AudioContext || window.webkitAudioContext;
+          if (!Ctx) throw new Error('audio');
+          const ctx = new Ctx();
+          const source = ctx.createMediaElementSource(video);
+          const gain = ctx.createGain();
+          source.connect(gain);
+          gain.connect(ctx.destination);
+          video.__animeonGainContext = ctx;
+          video.__animeonGainNode = gain;
+        }
+        if (video.__animeonGainContext.state === 'suspended') video.__animeonGainContext.resume().catch(() => {});
+        video.volume = level <= 100 ? level / 100 : 1;
+        video.__animeonGainNode.gain.value = level > 100 ? level / 100 : 1;
+        video.muted = muted;
+      } catch {
+        video.volume = Math.min(1, level / 100);
+        video.muted = muted;
+      }
+    }
+    return true;
+  })()`;
+  await executeGuest(script, true);
+}
+
+async function setVolume(delta) {
+  const change = Number(delta) || 0;
+  volumeState.volume = Math.max(0, Math.min(200, volumeState.volume + change));
+  await applyVolumeToGuest();
+  return volumeState;
+}
+
+async function setMuted(value) {
+  volumeState.muted = value === null ? !volumeState.muted : !!value;
+  await applyVolumeToGuest();
+  return volumeState;
+}
+
+function seekVideo(seconds) {
+  return executeGuest(`(() => { const v = Array.from(document.querySelectorAll('video')); if (!v.length) return false; const active = v.find(x => !x.paused && !x.ended) || v[0]; active.currentTime = Math.max(0, Math.min(Number.isFinite(active.duration) ? active.duration : active.currentTime + ${Number(seconds)}, active.currentTime + ${Number(seconds)})); return true; })()`);
+}
+
+function mediaAction(action) {
+  if (action === 'playpause') return togglePlayback();
+  if (action === 'next') return executeGuest(`(() => { const selectors = ['[aria-label*=\"next\" i]','[title*=\"next\" i]','button[class*=\"next\" i]','a[class*=\"next\" i]']; const el = selectors.map(s => document.querySelector(s)).find(Boolean); if (el) { el.click(); return true; } const text = Array.from(document.querySelectorAll('button,a')).find(x => /следующ|next/i.test(x.innerText || x.getAttribute('aria-label') || x.title || '')); if (text) { text.click(); return true; } return false; })()`);
+  if (action === 'previous') return executeGuest(`(() => { const selectors = ['[aria-label*=\"previous\" i]','[aria-label*=\"prev\" i]','[title*=\"previous\" i]','[title*=\"prev\" i]','button[class*=\"prev\" i]','a[class*=\"prev\" i]']; const el = selectors.map(s => document.querySelector(s)).find(Boolean); if (el) { el.click(); return true; } const text = Array.from(document.querySelectorAll('button,a')).find(x => /предыдущ|previous|prev/i.test(x.innerText || x.getAttribute('aria-label') || x.title || '')); if (text) { text.click(); return true; } return false; })()`);
+}
+
+function takeScreenshot() {
+  if (!win || win.isDestroyed()) return;
+  dialog.showSaveDialog(win, { title: 'Сохранить кадр', defaultPath: 'AnimeOn-screenshot.png', filters: [{ name: 'PNG', extensions: ['png'] }] }).then(async ({ canceled, filePath }) => {
+    if (canceled || !filePath) return;
+    try { const image = await win.capturePage(); fs.writeFileSync(filePath, image.toPNG()); win.webContents.send('toast', { message: 'Скриншот сохранён' }); } catch {}
+  });
+}
+
+function toggleAlwaysOnTop() {
+  if (!win || win.isDestroyed()) return;
+  config.alwaysOnTop = !win.isAlwaysOnTop();
+  win.setAlwaysOnTop(config.alwaysOnTop);
+  saveConfig();
+  win.webContents.send('always-on-top', config.alwaysOnTop);
+}
+
+function togglePlayback() {
+  const guest = siteWc;
+  if (!guest || guest.isDestroyed()) return;
+  try {
+    guest.executeJavaScript(`(() => {
+        const videos = Array.from(document.querySelectorAll('video'));
+        if (!videos.length) return false;
+        const active = videos.find(v => !v.paused && !v.ended) || videos[0];
+        if (active.paused || active.ended) {
+          const p = active.play();
+          if (p?.catch) p.catch(() => {});
+        } else {
+          active.pause();
+        }
+        return true;
+      })()`, false).catch(() => {});
+  } catch {} 
+}
+
+function toggleTrayWindow() {
+  if (!win) return;
+  if (win.isVisible()) {
+    if (config.tray) {
+      ensureTray();
+      win.hide();
+    } else {
+      win.hide();
+    }
+  } else {
+    showMainWindow();
+  }
+}
+
+function registerGlobalHotkeys() {
+  globalShortcut.unregisterAll();
+  const defaults = {
+    show: 'Control+Alt+A',
+    toggleWindow: 'Control+Alt+T',
+    playPause: 'Control+Alt+P',
+    volumeUp: 'Control+Alt+Up',
+    volumeDown: 'Control+Alt+Down',
+    mute: 'Control+Alt+M',
+    seekBack: 'Control+Alt+Left',
+    seekForward: 'Control+Alt+Right',
+    fullscreen: 'Control+Alt+F',
+    settings: 'Control+Alt+S',
+    reload: 'Control+Alt+R',
+    screenshot: 'Control+Alt+Shift+S',
+    alwaysOnTop: 'Control+Alt+O',
+    next: 'Control+Alt+PageDown',
+    previous: 'Control+Alt+PageUp',
+    trayMenu: 'Control+Alt+Y',
+    command: 'Control+Alt+K',
+    home: 'Control+Alt+H',
+    back: 'Control+Alt+J',
+    forward: 'Control+Alt+L',
+    zoomIn: 'Control+Alt+=',
+    zoomOut: 'Control+Alt+-',
+    zoomReset: 'Control+Alt+0',
+    switchSite: 'Control+Alt+W',
+    openBrowser: 'Control+Alt+B',
+  };
+  const keys = { ...defaults, ...(config.hotkeys || {}) };
+  const shortcuts = [
+    [keys.show, showMainWindow],
+    [keys.toggleWindow, toggleTrayWindow],
+    [keys.playPause, togglePlayback],
+    [keys.volumeUp, () => setVolume(5)],
+    [keys.volumeDown, () => setVolume(-5)],
+    [keys.mute, () => setMuted(null)],
+    [keys.seekBack, () => seekVideo(-10)],
+    [keys.seekForward, () => seekVideo(10)],
+    [keys.fullscreen, () => { if (win) win.setFullScreen(!win.isFullScreen()); }],
+    [keys.settings, () => { showMainWindow(); win?.webContents.send('open-settings'); }],
+    [keys.reload, () => win?.webContents.send('restart-webview')],
+    [keys.screenshot, takeScreenshot],
+    [keys.alwaysOnTop, toggleAlwaysOnTop],
+    [keys.next, () => mediaAction('next')],
+    [keys.previous, () => mediaAction('previous')],
+    [keys.trayMenu, toggleTrayMenu],
+    [keys.command, () => { showMainWindow(); win?.webContents.send('open-command-palette'); }],
+    [keys.home, () => win?.webContents.send('go-home')],
+    [keys.back, () => siteWc?.goBack()],
+    [keys.forward, () => siteWc?.goForward()],
+    [keys.zoomIn, () => siteWc && siteWc.setZoomFactor(Math.min(3, siteWc.getZoomFactor() + 0.1))],
+    [keys.zoomOut, () => siteWc && siteWc.setZoomFactor(Math.max(0.5, siteWc.getZoomFactor() - 0.1))],
+    [keys.zoomReset, () => siteWc?.setZoomFactor(1)],
+    [keys.switchSite, () => win?.webContents.send('switch-site')],
+    [keys.openBrowser, () => siteWc && shell.openExternal(siteWc.getURL())],
+    ['MediaPlayPause', () => mediaAction('playpause')],
+    ['MediaNextTrack', () => mediaAction('next')],
+    ['MediaPreviousTrack', () => mediaAction('previous')],
+  ];
+  for (const [accelerator, action] of shortcuts) {
+    if (!accelerator || typeof action !== 'function') continue;
+    try { globalShortcut.register(accelerator, action); } catch {}
+  }
 }
 
 function showMainWindow() {
@@ -281,7 +585,7 @@ function toggleTrayMenu() {
     trayMenuWin.hide();
     return;
   }
-  const [w, h] = [188, 166];
+  const [w, h] = [250, 220];
   const p = screen.getCursorScreenPoint();
   const wa = screen.getDisplayNearestPoint(p).workArea;
   trayMenuWin = new BrowserWindow({
@@ -326,6 +630,7 @@ ipcMain.on('tray-action', (_, action) => {
     showMainWindow();
     win.webContents.send('open-settings');
   }
+  if (action === 'menu') { toggleTrayMenu(); }
   if (action === 'quit') {
     quitting = true;
     app.exit(0);
@@ -343,8 +648,10 @@ ipcMain.on('cfg:set', (_, patch) => {
 });
 
 ipcMain.on('open-external', (_, url) => {
-  if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+  if (/^(https?|tg):\/\//i.test(url) || /^tg:/i.test(url)) shell.openExternal(url);
 });
+
+ipcMain.on('app:open-data-folder', () => { shell.openPath(app.getPath('userData')).catch(() => {}); });
 
 ipcMain.on('notify', (_, { title, body }) => {
   if (!Notification.isSupported() || !title) return;
@@ -377,7 +684,7 @@ ipcMain.handle('app:diagnostics', async () => {
     webviewMemoryMB = metric?.memory?.workingSetSize ? Math.round(metric.memory.workingSetSize / 1024) : 0;
   } catch {}
   return {
-    version: app.getVersion(),
+    version: '1.3.3',
     electron: process.versions.electron,
     chrome: process.versions.chrome,
     node: process.versions.node,
@@ -401,7 +708,7 @@ ipcMain.handle('app:clear-site-data', async () => {
   } catch (e) { return { ok: false, error: String(e?.message || e) }; }
 });
 
-const EXPORT_KEYS = ['theme','custom','site','remember','notify','autostart','tray','compact','confirmClose','autoRecovery','performance','lowPower','autoHide','closeBehavior'];
+const EXPORT_KEYS = ['theme','custom','site','remember','notify','autostart','tray','compact','confirmClose','autoRecovery','performance','lowPower','autoHide','closeBehavior','alwaysOnTop','hotkeys'];
 
 ipcMain.handle('settings:export', async () => {
   try {
@@ -441,7 +748,7 @@ ipcMain.handle('settings:import', async () => {
 
 ipcMain.handle('settings:reset', async () => {
   try {
-    const defaults = { theme:'violet', custom:'#8b5cf6', site:'', remember:'0', notify:false, autostart:false, tray:false, compact:false, confirmClose:false, autoRecovery:true, performance:'balanced', lowPower:true, autoHide:true, closeBehavior:'ask' };
+    const defaults = { theme:'violet', custom:'#8b5cf6', site:'', remember:'0', notify:false, autostart:false, tray:false, compact:false, confirmClose:false, autoRecovery:true, performance:'balanced', lowPower:true, autoHide:true, closeBehavior:'ask', alwaysOnTop:false, hotkeys:{} };
     Object.assign(config, defaults); saveConfig(); applySideEffects({ autostart:true, tray:true });
     return { ok: true, settings: config };
   } catch (e) { return { ok:false, error:String(e?.message || e) }; }
@@ -494,6 +801,26 @@ ipcMain.on('app:set-performance', (_, mode) => {
   if (win && !win.isDestroyed()) win.webContents.send('performance-mode', config.performance);
 });
 
+ipcMain.on('media:volume', (_, delta) => setVolume(Number(delta) || 0).then(v => { if (v && win && !win.isDestroyed()) win.webContents.send('media-overlay', { type: 'volume', value: v.volume, muted: v.muted }); }));
+ipcMain.handle('media:volume-state', () => volumeState);
+ipcMain.on('media:mute', () => setMuted(null).then(v => { if (v && win && !win.isDestroyed()) win.webContents.send('media-overlay', { type: 'volume', value: v.volume, muted: v.muted }); }));
+ipcMain.on('media:seek', (_, seconds) => { const n = Number(seconds) || 0; seekVideo(n).then(ok => { if (ok && win && !win.isDestroyed()) win.webContents.send('media-overlay', { type: 'seek', value: n }); }); });
+ipcMain.on('media:action', (_, action) => mediaAction(action));
+ipcMain.on('app:screenshot', takeScreenshot);
+ipcMain.on('app:always-on-top', toggleAlwaysOnTop);
+ipcMain.on('app:zoom', (_, delta) => {
+  if (!siteWc || siteWc.isDestroyed()) return;
+  const d = Number(delta) || 0;
+  const current = siteWc.getZoomFactor();
+  siteWc.setZoomFactor(d === 0 ? 1 : Math.max(0.5, Math.min(3, current + d)));
+});
+ipcMain.on('app:register-hotkeys', registerGlobalHotkeys);
+ipcMain.handle('hotkeys:set', (_, hotkeys) => {
+  config.hotkeys = hotkeys && typeof hotkeys === 'object' ? hotkeys : {};
+  saveConfig();
+  registerGlobalHotkeys();
+  return config.hotkeys;
+});
 ipcMain.on('app:toggle-devtools', () => {
   if (!win || win.isDestroyed()) return;
   win.webContents.toggleDevTools();
@@ -678,7 +1005,7 @@ ipcMain.on('taskbar-progress', (_, value) => {
 });
 
 ipcMain.on('app:info', (e) => {
-  e.returnValue = { version: app.getVersion(), name: 'AnimeOn Desktop', electron: process.versions.electron };
+  e.returnValue = { version: '1.3.3', name: 'AnimeOn Desktop', electron: process.versions.electron };
 });
 
 app.whenReady().then(() => {
@@ -692,7 +1019,7 @@ app.whenReady().then(() => {
 
   if (process.argv.includes('--settings')) setTimeout(() => win?.webContents.send('open-settings'), 900);
   if (process.argv.includes('--reload')) setTimeout(() => win?.webContents.send('restart-webview'), 1200);
-  globalShortcut.register('Control+Alt+A', () => showMainWindow());
+  registerGlobalHotkeys();
 });
 
 app.on('will-quit', () => {
