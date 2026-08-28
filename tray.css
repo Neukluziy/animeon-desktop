@@ -1,0 +1,9 @@
+html.tray-menu,body.tray-menu{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:transparent;font-family:"Segoe UI",system-ui,sans-serif}
+body.tray-menu{color:#f1f1f3}
+.tm-menu{position:absolute;inset:5px;box-sizing:border-box;padding:4px;border:1px solid rgba(255,255,255,.13);border-radius:8px;background:rgba(31,31,34,.98);box-shadow:0 10px 28px rgba(0,0,0,.5)}
+.tm-item{appearance:none;display:flex;align-items:center;width:100%;height:27px;min-height:27px;box-sizing:border-box;padding:0 9px;margin:0;border:0;border-radius:4px;background:transparent;color:#f0f0f2;font:400 12px/27px "Segoe UI",system-ui,sans-serif;text-align:left;white-space:nowrap;overflow:hidden;cursor:pointer;outline:none}
+.tm-item:hover,.tm-item:focus-visible{background:rgba(255,255,255,.10)}
+.tm-item:active{background:rgba(255,255,255,.15)}
+.tm-danger{color:#f0b4ba}
+.tm-danger:hover,.tm-danger:focus-visible{background:rgba(180,45,55,.22)}
+.tm-separator{height:1px;margin:4px 4px;background:rgba(255,255,255,.09)}
