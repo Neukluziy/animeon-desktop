@@ -1,37 +1,27 @@
 <!DOCTYPE html>
 <html lang="ru" class="tray-menu">
 <head>
-  <meta charset="UTF-8" />
-  <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self'; style-src 'self'; img-src 'self' data:; script-src 'self'" />
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; img-src 'self' data:; script-src 'self'">
   <title>AnimeOn</title>
-  <link rel="stylesheet" href="style.css" />
-  <link rel="stylesheet" href="tray.css" />
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="tray.css">
 </head>
 <body class="tray-menu">
   <div class="tm-card">
     <div class="tm-head">
-      <img src="assets/logo.png" alt="" draggable="false">
-      <span>Anime<em>ON</em></span>
+      <div class="tm-brand">
+        <div class="tm-logo"><img src="assets/logo.png" alt="" draggable="false"></div>
+        <div class="tm-title"><b>Anime<span>ON</span></b><small id="tm-status">Работает</small></div>
+      </div>
       <i class="tm-ver" id="tm-ver"></i>
     </div>
-    <button class="tm-item" id="tm-open">
-      <svg viewBox="0 0 24 24"><path d="M3 11.5L12 4l9 7.5"/><path d="M6 10v10h12V10"/></svg>
-      Открыть
-    </button>
-    <button class="tm-item" id="tm-hide">
-      <svg viewBox="0 0 24 24"><path d="M6 12h12"/></svg>
-      Скрыть
-    </button>
-    <button class="tm-item" id="tm-settings">
-      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6h.09A1.65 1.65 0 0 0 10 3.09V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.09a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-      Настройки
-    </button>
-    <div class="tm-sep"></div>
-    <button class="tm-item danger" id="tm-quit">
-      <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
-      Выйти
-    </button>
+    <div class="tm-actions">
+      <button class="tm-item tm-main" id="tm-open"><span class="tm-ico"><svg viewBox="0 0 24 24"><path d="M3 11.5L12 4l9 7.5"/><path d="M6 10v10h12V10"/></svg></span><span>Открыть</span></button>
+      <button class="tm-item" id="tm-settings"><span class="tm-ico"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19 13.5a7.3 7.3 0 0 0 0-3l2-1.1-2-3.4-2.1.8a7.5 7.5 0 0 0-2.6-1.5L14 3h-4l-.3 2.3a7.5 7.5 0 0 0-2.6 1.5L5 6 3 9.4l2 1.1a7.3 7.3 0 0 0 0 3l-2 1.1L5 18l2.1-.8a7.5 7.5 0 0 0 2.6 1.5L10 21h4l.3-2.3a7.5 7.5 0 0 0 2.6-1.5L19 18l2-3.4-2-1.1z"/></svg></span><span>Настройки</span></button>
+      <button class="tm-item" id="tm-hide"><span class="tm-ico"><svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg></span><span>Скрыть окно</span></button>
+      <button class="tm-item tm-quit" id="tm-quit"><span class="tm-ico"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></span><span>Выйти</span></button>
+    </div>
   </div>
   <script src="tray.js"></script>
 </body>
