@@ -4,7 +4,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 
 const { SITE_RE, AUTH_RE, TELEGRAM_RE, APP_VERSION, compareVersions } = require('./modules');
-
+const { API_BASE, API_VERSION, request: apiRequest, get: apiGet, post: apiPost, health: apiHealth } = require('./api-client');
 const configPath = path.join(app.getPath('userData'), 'config.json');
 const screenshotsDir = path.join(app.getPath('pictures'), 'AnimeOn');
 
@@ -29,7 +29,11 @@ function formatTimestamp(d = new Date()) {
 let config = {
   theme: 'violet',
   custom: '#8b5cf6',
-  site: '',
+  site: 'co',
+  siteList: [
+    { id: 'one', url: 'https://animeon.cc/', label: 'animeon.cc' },
+    { id: 'two', url: 'https://v1.animeon.co/', label: 'v1.animeon.co' },
+  ],
   remember: '0',
   notify: false,
   autostart: false,
@@ -50,11 +54,44 @@ let config = {
   lastUrl: '',
   history: [],
   favorites: [],
+  recentPages: [],
+  pageFavorites: [],
+  tabs: [],
+  activeTab: 0,
+  tabsFixedV2: false,
+  doNotDisturb: false,
+  sleepTimer: { enabled: false, minutes: 0, action: 'pause' },
+  autoCacheCleanup: true,
+  cacheLimitMB: 512,
+  errorLog: [],
+  memorySaver: false,
+  startupPolicyFixed: false,
+  api: { baseUrl: API_BASE, clientVersion: API_VERSION, timeout: 10000 },
+  playbackPositions: {},
+  playbackSpeed: 1,
+  resumeEnabled: true,
+  autoNext: false,
+  library: { favorites: [], continueWatching: [], localHistory: [] },
 };
 
 try {
   Object.assign(config, JSON.parse(fs.readFileSync(configPath, 'utf8')));
 } catch {}
+if (!Array.isArray(config.siteList) || config.siteList.length < 2) {
+  config.siteList = [
+    { id: 'one', url: 'https://animeon.cc/', label: 'animeon.cc' },
+    { id: 'two', url: 'https://v1.animeon.co/', label: 'v1.animeon.co' },
+  ];
+}
+config.siteList = config.siteList.slice(0, 2).map((site, index) => {
+  const rawUrl = String(site?.url || '').trim();
+  const url = /^https?:\/\//i.test(rawUrl) ? rawUrl : `https://${rawUrl}`;
+  return {
+    id: index === 0 ? 'one' : 'two',
+    url: url.endsWith('/') ? url : `${url}/`,
+    label: String(site?.label || url.replace(/^https?:\/\//i, '').replace(/\/$/, '')).trim(),
+  };
+});
 if (!config.customCss || typeof config.customCss !== 'object') config.customCss = { cc: '', co: '' };
 if (typeof config.smoothSite !== 'boolean') config.smoothSite = true;
 if (!config.visual || typeof config.visual !== 'object') config.visual = { radius:18, opacity:92, blur:0, scale:100, density:100, accentGlow:70, animations:'smooth' };
@@ -62,24 +99,41 @@ if (Number(config.visual.blur) === 18) config.visual.blur = 0;
 if (!config.profiles || typeof config.profiles !== 'object') config.profiles = {};
 if (!Array.isArray(config.history)) config.history = [];
 if (!Array.isArray(config.favorites)) config.favorites = [];
+if (!Array.isArray(config.recentPages)) config.recentPages = [];
+if (!Array.isArray(config.pageFavorites)) config.pageFavorites = [];
+if (!Array.isArray(config.tabs)) config.tabs = [];
+if (!Number.isInteger(config.activeTab)) config.activeTab = 0;
+if (typeof config.tabsFixedV2 !== 'boolean') config.tabsFixedV2 = false;
+if (!config.tabsFixedV2) { config.tabs = []; config.activeTab = 0; config.tabsFixedV2 = true; }
+if (!config.sleepTimer || typeof config.sleepTimer !== 'object') config.sleepTimer = { enabled:false, minutes:0, action:'pause' };
+if (!Array.isArray(config.errorLog)) config.errorLog = [];
+if (typeof config.doNotDisturb !== 'boolean') config.doNotDisturb = false;
+if (typeof config.autoCacheCleanup !== 'boolean') config.autoCacheCleanup = true;
+if (!Number.isFinite(Number(config.cacheLimitMB))) config.cacheLimitMB = 512;
+if (typeof config.memorySaver !== 'boolean') config.memorySaver = false;
+if (!config.api || typeof config.api !== 'object') config.api = { baseUrl: API_BASE, clientVersion: API_VERSION, timeout: 10000 };
+if (!config.playbackPositions || typeof config.playbackPositions !== 'object' || Array.isArray(config.playbackPositions)) config.playbackPositions = {};
+if (!Number.isFinite(Number(config.playbackSpeed)) || ![0.25,0.5,0.75,1,1.25,1.5,1.75,2].includes(Number(config.playbackSpeed))) config.playbackSpeed = 1;
+if (typeof config.resumeEnabled !== 'boolean') config.resumeEnabled = true;
+if (typeof config.autoNext !== 'boolean') config.autoNext = false;
+if (!config.library || typeof config.library !== 'object') config.library = { favorites: [], continueWatching: [], localHistory: [] };
+for (const key of ['favorites','continueWatching','localHistory']) if (!Array.isArray(config.library[key])) config.library[key] = [];
+if (config.api.baseUrl !== API_BASE) config.api.baseUrl = API_BASE;
+if (!Number.isFinite(Number(config.api.timeout))) config.api.timeout = 10000;
 if (typeof config.lastUrl !== 'string') config.lastUrl = '';
+if (typeof config.startupPolicyFixed !== 'boolean') config.startupPolicyFixed = false;
 
 function buildVisualCss() {
   const v = config.visual || {};
   const radius = Number.isFinite(Number(v.radius)) ? Number(v.radius) : 18;
   const opacity = (Number.isFinite(Number(v.opacity)) ? Number(v.opacity) : 96) / 100;
   const blur = Number.isFinite(Number(v.blur)) ? Number(v.blur) : 0;
-  const scale = (Number.isFinite(Number(v.scale)) ? Number(v.scale) : 100) / 100;
+  const scale = Number.isFinite(Number(v.scale)) ? Number(v.scale) : 100;
   const density = (Number.isFinite(Number(v.density)) ? Number(v.density) : 100) / 100;
   const glow = (Number.isFinite(Number(v.accentGlow)) ? Number(v.accentGlow) : 55) / 100;
   const animations = ['off','smooth','cinematic'].includes(v.animations) ? v.animations : 'smooth';
   const transition = animations === 'cinematic' ? '620ms cubic-bezier(.16,1,.3,1)' : animations === 'smooth' ? '360ms cubic-bezier(.22,1,.36,1)' : '0ms';
-  const motion = animations !== 'off' ? `button,a,input,select,textarea,[role=button]{transition:transform var(--animeon-transition),opacity var(--animeon-transition),box-shadow var(--animeon-transition),background-color var(--animeon-transition),border-color var(--animeon-transition),color var(--animeon-transition)!important}` : '';
-  const safeScale = scale === 1 ? '' : `body{zoom:${scale}}`;
-  const panel = blur > 0 ? `.animeon-theme-surface{backdrop-filter:blur(${blur}px) saturate(115%);-webkit-backdrop-filter:blur(${blur}px);background-color:rgba(24,20,31,${opacity})}` : '';
-  const densityRules = density === 1 ? '' : `.animeon-theme-density{--animeon-density:${density}}`;
-  const glowRules = glow > 0 ? `.animeon-theme-glow{box-shadow:0 8px ${Math.round(26*glow)}px rgba(var(--animeon-accent-rgb,139,92,246),${(.20*glow).toFixed(3)})!important}` : '';
-  return `:root{--animeon-radius:${radius}px;--animeon-alpha:${opacity};--animeon-blur:${blur}px;--animeon-density:${density};--animeon-transition:${transition};--animeon-glow:${glow}}html{scroll-behavior:${config.smoothSite !== false ? 'smooth' : 'auto'}!important;scroll-padding-top:12px}${safeScale}${motion}${panel}${densityRules}${glowRules}*{scrollbar-width:thin}`;
+  return `:root{--animeon-radius:${radius}px;--animeon-alpha:${opacity};--animeon-blur:${blur}px;--animeon-density:${density};--animeon-transition:${transition};--animeon-glow:${glow};--animeon-scale:${scale / 100}}html{scroll-behavior:${config.smoothSite !== false ? 'smooth' : 'auto'}!important;scroll-padding-top:12px}*{scrollbar-width:none!important}*::-webkit-scrollbar{width:0!important;height:0!important;display:none!important}`;
 }
 
 function saveConfig() {
@@ -113,6 +167,132 @@ let trayMenuWin = null;
 let telegramWin = null;
 let siteWc = null;
 let volumeState = { volume: 100, muted: false };
+let mediaPollTimer = null;
+let lastResumeUrl = '';
+let lastPlaybackPersist = 0;
+let lastMediaState = null;
+let sleepTimerHandle = null;
+let lastAutoNextUrl = '';
+const logPath = path.join(app.getPath('userData'), 'animeon.log');
+function writeLog(level, message, meta) {
+  try {
+    fs.mkdirSync(path.dirname(logPath), { recursive: true });
+    const time = new Date().toISOString();
+    fs.appendFileSync(logPath, JSON.stringify({ time, level, message:String(message||''), meta:meta||null })+'\n', 'utf8');
+    config.errorLog = [{time, level, message:String(message||'')} , ...(config.errorLog||[])].slice(0,300);
+    saveConfig();
+  } catch {}
+}
+const originalConsoleError = console.error;
+console.error = (...args) => { originalConsoleError(...args); writeLog('error', args.map(String).join(' ')); };
+const originalConsoleWarn = console.warn;
+console.warn = (...args) => { originalConsoleWarn(...args); writeLog('warn', args.map(String).join(' ')); };
+function sanitizeName(value) {
+  return String(value||'AnimeOn').replace(/[<>:"/\\|?*\x00-\x1F]/g,' ').replace(/\s+/g,' ').trim().slice(0,100) || 'AnimeOn';
+}
+function pageLabel(url, title='') {
+  return sanitizeName(String(title||'').replace(/[-_|]+/g,' ')) || sanitizeName(String(url).split('/').filter(Boolean).pop() || 'AnimeOn');
+}
+function normalizePageUrl(url) {
+  try {
+    const u=new URL(String(url||''));
+    if (!/^https?:$/i.test(u.protocol) || !/(^|\.)animeon\.(cc|co)$/i.test(u.hostname)) return '';
+    u.hash='';
+    return u.toString();
+  } catch { return ''; }
+}
+function rememberRecentPage(url, title='') {
+  const normalized=normalizePageUrl(url);
+  if (!normalized) return;
+  const item={url:normalized, title:pageLabel(normalized,title), updatedAt:new Date().toISOString()};
+  config.recentPages=[item,...(config.recentPages||[]).filter(x=>normalizePageUrl(x?.url)!==normalized)].slice(0,100);
+  saveConfig();
+}
+function setSleepTimer(minutes, action='pause') {
+  if (sleepTimerHandle) clearTimeout(sleepTimerHandle);
+  const m=Math.max(0,Number(minutes)||0);
+  config.sleepTimer={enabled:m>0,minutes:m,action:['pause','exit','tray'].includes(action)?action:'pause'};
+  saveConfig();
+  if (!m) return {ok:true,enabled:false};
+  sleepTimerHandle=setTimeout(()=>{
+    try { if(config.sleepTimer.action==='exit'){ quitting=true; app.exit(0); } else if(config.sleepTimer.action==='tray'){ ensureTray(); win?.hide(); } else togglePlayback(); } catch {}
+    config.sleepTimer={enabled:false,minutes:0,action:'pause'}; saveConfig();
+  }, m*60000);
+  return {ok:true,enabled:true,minutes:m,action:config.sleepTimer.action};
+}
+function scheduleCacheCleanup() {
+  if (!config.autoCacheCleanup) return;
+  setTimeout(async()=>{
+    try {
+      const max=Number(config.cacheLimitMB)||512;
+      const usage=await session.defaultSession.getCacheSize();
+      if(usage>max*1048576) await session.defaultSession.clearCache();
+    } catch(e){ writeLog('warn','Cache cleanup failed',{error:String(e?.message||e)}); }
+  }, 2500);
+}
+setInterval(() => scheduleCacheCleanup(), 15 * 60 * 1000);
+const PROTOCOL = 'animeon';
+
+function extractDeepLink(argv = []) {
+  return argv.find((arg) => typeof arg === 'string' && arg.toLowerCase().startsWith(`${PROTOCOL}://`)) || '';
+}
+
+function openDeepLink(rawUrl) {
+  const value = String(rawUrl || '');
+  if (!/^animeon:\/\//i.test(value)) return false;
+  try {
+    const u = new URL(value);
+    const target = u.searchParams.get('url');
+    if (target && SITE_RE.test(target)) { siteWc?.loadURL(target); showMainWindow(); return true; }
+    const pathPart = `${u.pathname || ''}${u.search || ''}${u.hash || ''}`;
+    if (pathPart && siteWc && !siteWc.isDestroyed()) {
+      const base = (config.siteList && config.siteList[0]?.url) || 'https://animeon.cc';
+      siteWc.loadURL(new URL(pathPart, base).href);
+      showMainWindow();
+      return true;
+    }
+  } catch {}
+  return false;
+}
+
+function updateMediaSession(state) {
+  if (!siteWc || siteWc.isDestroyed()) return;
+  const safe = {
+    title: String(state?.title || 'AnimeOn').slice(0, 120),
+    currentTime: Number(state?.currentTime || 0),
+    duration: Number(state?.duration || 0),
+    paused: !!state?.paused,
+  };
+  if (JSON.stringify(safe) === JSON.stringify(lastMediaState)) return;
+  lastMediaState = safe;
+  try {
+    siteWc.executeJavaScript(`(() => {
+      const s=${JSON.stringify(safe)};
+      if (!('mediaSession' in navigator)) return false;
+      navigator.mediaSession.playbackState=s.paused?'paused':'playing';
+      try { navigator.mediaSession.metadata = new MediaMetadata({title:s.title,artist:'AnimeOn'}); } catch {}
+      return true;
+    })()`, false).catch(() => {});
+  } catch {}
+}
+
+function registerProtocol() {
+  try {
+    if (process.defaultApp) {
+      const execPath = process.execPath;
+      const entry = path.resolve(process.argv[1] || '.');
+      app.setAsDefaultProtocolClient(PROTOCOL, execPath, [entry]);
+    } else {
+      app.setAsDefaultProtocolClient(PROTOCOL);
+    }
+  } catch {}
+}
+
+function handleStartupDeepLink(argv = []) {
+  const link = extractDeepLink(argv);
+  if (link) setTimeout(() => openDeepLink(link), 900);
+}
+
 
 app.on('second-instance', (_, argv) => {
   if (!win) return;
@@ -121,6 +301,8 @@ app.on('second-instance', (_, argv) => {
   win.focus();
   if (argv.includes('--settings')) win.webContents.send('open-settings');
   if (argv.includes('--reload')) win.webContents.send('restart-webview');
+  const deepLink = extractDeepLink(argv);
+  if (deepLink) openDeepLink(deepLink);
 });
 
 function loadWindowState() {
@@ -211,7 +393,15 @@ function createTelegramWindow(url) {
 }
 
 function createWindow() {
+  try{ app.setAppUserModelId('co.animeon.desktop'); }catch{}
   const ws = loadWindowState();
+  let winIcon;
+  try{
+    const icoPath=path.join(__dirname, '../assets', 'logo.ico');
+    const pngPath=path.join(__dirname, '../assets', 'logo.png');
+    if(fs.existsSync(icoPath)) winIcon=nativeImage.createFromPath(icoPath);
+    else if(fs.existsSync(pngPath)) winIcon=nativeImage.createFromPath(pngPath);
+  }catch{}
   win = new BrowserWindow({
     width: ws.width,
     height: ws.height,
@@ -222,7 +412,7 @@ function createWindow() {
     backgroundColor: '#0a0a0a',
     frame: false,
     show: false,
-    icon: path.join(__dirname, '../assets', 'logo.ico'),
+    icon: winIcon || path.join(__dirname, '../assets', 'logo.ico'),
     title: 'AnimeOn',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -234,7 +424,7 @@ function createWindow() {
     },
   });
 
-  win.once('ready-to-show', () => win.show());
+  win.once('ready-to-show', () => { try{ if(winIcon && !winIcon.isEmpty()) win.setIcon(winIcon); }catch{} win.show(); });
   win.setMenuBarVisibility(false);
   win.setAlwaysOnTop(!!config.alwaysOnTop);
   win.loadFile(path.join(__dirname, '../index.html'));
@@ -242,6 +432,7 @@ function createWindow() {
 
   win.webContents.on('before-input-event', (e, input) => {
     if (input.type !== 'keyDown') return;
+    if (handleLocalHotkey(input, e)) return;
     const isDevToolsCombo = input.key === 'F12' ||
       (input.control && input.shift && input.key.toLowerCase() === 'i');
     if (!isDevToolsCombo) return;
@@ -310,10 +501,57 @@ function createWindow() {
 
   setupJumpList();
 
+  const siteSession = win.webContents.session;
+  siteSession.webRequest.onHeadersReceived((details, callback) => {
+    const headers = { ...(details.responseHeaders || {}) };
+    try {
+      const requestUrl = new URL(details.url);
+      const origin = String(details.requestHeaders?.Origin || details.requestHeaders?.origin || '');
+      if (origin && /(^|\.)animeon\.(cc|co)$/i.test(new URL(origin).hostname) && /(^|\.)animeon\.cloud$/i.test(requestUrl.hostname)) {
+        const key = Object.keys(headers).find(k => k.toLowerCase() === 'access-control-allow-origin');
+        if (key) delete headers[key];
+        headers['Access-Control-Allow-Origin'] = [origin];
+        const credKey = Object.keys(headers).find(k => k.toLowerCase() === 'access-control-allow-credentials');
+        if (credKey) delete headers[credKey];
+        headers['Access-Control-Allow-Credentials'] = ['true'];
+      }
+    } catch {}
+    callback({ responseHeaders: headers });
+  });
+
+  const configuredSiteSessions = new WeakSet();
   win.webContents.on('did-attach-webview', (_, wc) => {
     siteWc = wc;
     try { wc.setBackgroundThrottling(config.performance === 'economy'); } catch {}
     try { wc.setVisualZoomLevelLimits(0.5, 3); } catch {}
+    try {
+      const session = wc.session;
+      const ua = win.webContents.getUserAgent().replace(/\sElectron\/[\d.]+/i, '');
+      session.setUserAgent(ua, 'ru-RU,ru');
+      if (!configuredSiteSessions.has(session)) {
+        configuredSiteSessions.add(session);
+        session.webRequest.onHeadersReceived((details, callback) => {
+          const headers={...(details.responseHeaders||{})};
+          try {
+            const requestUrl=new URL(details.url);
+            const origin=String(details.requestHeaders?.Origin||details.requestHeaders?.origin||'');
+            const allowedOrigin=origin && /(^|\.)animeon\.(cc|co)$/i.test(new URL(origin).hostname);
+            const isCloud=/(^|\.)animeon\.cloud$/i.test(requestUrl.hostname);
+            if (allowedOrigin && isCloud) {
+              for (const key of Object.keys(headers)) {
+                if (/^access-control-allow-(origin|credentials|methods|headers)$/i.test(key)) delete headers[key];
+              }
+              headers['Access-Control-Allow-Origin']=[origin];
+              headers['Access-Control-Allow-Credentials']=['true'];
+              headers['Access-Control-Allow-Methods']=['GET,HEAD,OPTIONS'];
+              headers['Access-Control-Allow-Headers']=['Range,Origin,Accept,Content-Type,Authorization'];
+              headers['Access-Control-Expose-Headers']=['Content-Length,Content-Range,Accept-Ranges'];
+            }
+          } catch {}
+          callback({responseHeaders:headers});
+        });
+      }
+    } catch {}
     wc.on('render-process-gone', () => {
       setTaskbarOverlay('error');
       if (config.autoRecovery && win && !win.isDestroyed()) {
@@ -321,6 +559,24 @@ function createWindow() {
       }
     });
     wc.on('dom-ready', async () => {
+      setTimeout(() => applyPlaybackPreferences().catch(() => {}), 500);
+      try {
+        await wc.executeJavaScript(`(() => {
+          if (!('mediaSession' in navigator)) return false;
+          const pick = () => Array.from(document.querySelectorAll('video')).find(v => !v.paused && !v.ended) || document.querySelector('video');
+          const run = (fn) => { try { const v=pick(); if(v) fn(v); } catch {} };
+          const handlers = {
+            play: () => run(v => v.play()),
+            pause: () => run(v => v.pause()),
+            seekbackward: () => run(v => { v.currentTime=Math.max(0,v.currentTime-10); }),
+            seekforward: () => run(v => { v.currentTime=Math.min(v.duration||Infinity,v.currentTime+10); }),
+            nexttrack: () => document.querySelector('[aria-label*="next" i],[title*="next" i],[class*="next" i]')?.click(),
+            previoustrack: () => document.querySelector('[aria-label*="previous" i],[title*="previous" i],[class*="previous" i]')?.click(),
+          };
+          for (const [name, fn] of Object.entries(handlers)) { try { navigator.mediaSession.setActionHandler(name, fn); } catch {} }
+          return true;
+        })()`, false);
+      } catch {}
       try {
         const css = config.customCss && typeof config.customCss === 'object' ? String(config.customCss[config.site === 'co' ? 'co' : 'cc'] || '') : '';
         const injected = `${buildVisualCss()}\n${css}`;
@@ -340,13 +596,20 @@ function createWindow() {
         if (Array.isArray(imgs) && imgs.length) win?.webContents.send('mirror-posters', imgs);
       } catch {}
     });
-    wc.on('did-frame-finish-load', () => { applyVolumeToGuest().catch(() => {}); });
+    wc.on('did-frame-finish-load', () => { applyVolumeToGuest().catch(() => {}); applyPlaybackPreferences().catch(() => {}); });
     wc.on('will-navigate', (event, url) => {
       if (TELEGRAM_RE.test(url) || /^tg:/i.test(url)) {
         event.preventDefault();
         openTelegramExternal(url);
       }
     });
+    const rememberWcPage = async (url) => {
+      try { const title=await wc.executeJavaScript('document.title||\"\"',false); rememberRecentPage(url,title); }
+      catch { rememberRecentPage(url,''); }
+    };
+    wc.on('did-navigate', (_, url) => { rememberWcPage(url); });
+    wc.on('did-navigate-in-page', (_, url) => { rememberWcPage(url); });
+    wc.on('did-finish-load', () => { try { rememberWcPage(wc.getURL()); } catch {} });
     wc.setWindowOpenHandler(({ url }) => {
       if (TELEGRAM_RE.test(url)) {
         openTelegramExternal(url);
@@ -416,6 +679,9 @@ function createWindow() {
 
     wc.on('before-input-event', (e, input) => {
       if (input.type !== 'keyDown') return;
+      if (handleLocalHotkey(input, e)) return;
+      if (input.control && input.key.toLowerCase() === 'f') { win?.webContents.send('find-open'); e.preventDefault(); return; }
+      if (input.control && input.key.toLowerCase() === 'tab') { win?.webContents.send('tabs-cycle', input.shift ? -1 : 1); e.preventDefault(); return; }
       if (input.key === 'F5') { wc.reload(); e.preventDefault(); }
       else if (input.control && input.key.toLowerCase() === 'r') { wc.reload(); e.preventDefault(); }
       else if (input.control && (input.key === '+' || input.key === '=')) {
@@ -506,6 +772,156 @@ async function setMuted(value) {
   return volumeState;
 }
 
+async function applyPlaybackPreferences() {
+  const speed = Number(config.playbackSpeed) || 1;
+  const resumeUrl = String(siteWc?.getURL?.() || '');
+  const saved = resumeUrl && config.playbackPositions ? config.playbackPositions[resumeUrl] : null;
+  const resume = config.resumeEnabled !== false && saved && Number(saved.time) > 3 ? Number(saved.time) : 0;
+  if (resumeUrl && resumeUrl !== lastResumeUrl) lastResumeUrl = resumeUrl;
+  await executeGuest(`(() => {
+    const videos = Array.from(document.querySelectorAll('video'));
+    if (!videos.length) return false;
+    const active = videos.find(v => !v.paused && !v.ended) || videos[0];
+    for (const video of videos) video.playbackRate = ${speed};
+    if (${resume > 0 ? 'true' : 'false'} && active.readyState >= 1 && Math.abs(active.currentTime - ${resume}) > 2) active.currentTime = Math.max(0, Math.min(Number.isFinite(active.duration) ? active.duration - 0.5 : ${resume}, ${resume}));
+    return true;
+  })()`, true);
+}
+
+function setPlaybackSpeed(value) {
+  const allowed = [0.25,0.5,0.75,1,1.25,1.5,1.75,2];
+  const speed = allowed.includes(Number(value)) ? Number(value) : 1;
+  config.playbackSpeed = speed;
+  saveConfig();
+  return executeGuest(`(() => { const videos = Array.from(document.querySelectorAll('video')); for (const video of videos) video.playbackRate = ${speed}; return videos.length > 0; })()`).then(() => speed);
+}
+
+function getMediaState() {
+  return executeGuest(`(() => {
+    const videos = Array.from(document.querySelectorAll('video'));
+    if (!videos.length) return null;
+    const active = videos.find(v => !v.paused && !v.ended) || videos.find(v => v.readyState >= 2) || videos[0];
+    const title = document.title || '';
+    return { currentTime: Number(active.currentTime || 0), duration: Number.isFinite(active.duration) ? active.duration : 0, paused: !!active.paused, ended: !!active.ended, rate: Number(active.playbackRate || 1), title, src: active.currentSrc || active.src || '' };
+  })()`);
+}
+
+async function pollMediaState() {
+  if (!win || win.isDestroyed() || !siteWc || siteWc.isDestroyed()) return;
+  try {
+    const state = await getMediaState();
+    const url = String(siteWc.getURL?.() || '');
+    if (!state) {
+      win.webContents.send('media-state', { available: false, url });
+      return;
+    }
+    const payload = { available: true, url, ...state };
+    win.webContents.send('media-state', payload);
+    updateMediaSession(payload);
+    if (process.platform === 'win32' && tray) tray.setToolTip(payload.title ? `AnimeOn — ${String(payload.title).slice(0, 70)}` : 'AnimeOn');
+    if (config.autoNext && state.ended && url && url !== lastAutoNextUrl) {
+      lastAutoNextUrl = url;
+      setTimeout(() => mediaAction('next'), 350);
+    }
+    if (!state.ended && url !== lastAutoNextUrl) lastAutoNextUrl = '';
+    if (url && /^https:\/\/(?:www\.)?animeon\.(?:cc|co)\//i.test(url) && state.duration > 0 && state.currentTime >= 0) {
+      const now = Date.now();
+      if (now - lastPlaybackPersist >= 5000) {
+        lastPlaybackPersist = now;
+        config.playbackPositions[url] = { time: Math.round(state.currentTime * 10) / 10, duration: Math.round(state.duration * 10) / 10, title: String(state.title || '').slice(0, 180), updatedAt: new Date().toISOString() };
+        const entries = Object.entries(config.playbackPositions).sort((a,b) => String(b[1]?.updatedAt || '').localeCompare(String(a[1]?.updatedAt || ''))).slice(0, 300);
+        config.playbackPositions = Object.fromEntries(entries);
+        saveConfig();
+      }
+    }
+  } catch {}
+}
+
+function startMediaPolling() {
+  if (mediaPollTimer) clearInterval(mediaPollTimer);
+  mediaPollTimer = setInterval(() => pollMediaState(), 1000);
+}
+
+function togglePictureInPicture() {
+  return executeGuest(`(async () => {
+    const videos = Array.from(document.querySelectorAll('video'));
+    if (!videos.length) return { ok:false, reason:'no-video' };
+    if (document.pictureInPictureElement) { await document.exitPictureInPicture(); return { ok:true, active:false }; }
+    const active = videos.find(v => !v.paused && !v.ended) || videos[0];
+    if (!active.requestPictureInPicture) return { ok:false, reason:'unsupported' };
+    await active.requestPictureInPicture();
+    return { ok:true, active:true };
+  })()`, true);
+}
+
+async function inspectPlaybackOptions() {
+  const result = await executeGuest(`(() => {
+    const normalize = value => String(value || '').replace(/\\s+/g, ' ').trim();
+    const textOf = el => normalize(el?.innerText || el?.textContent || el?.getAttribute('aria-label') || el?.title || '');
+    const selectors = 'button,a,[role="button"],option';
+    const nodes = Array.from(document.querySelectorAll(selectors));
+    const qualityRx = /(?:2160|1440|1080|720|576|480|360)p?|4k|ultra|full hd|hd/i;
+    const dubRx = /озвуч|дубляж|voice|dub|anilibria|anidub|dream ?cast|shiza|jam|studio band|студийн/i;
+    const quality = [...new Set(nodes.map(textOf).filter(x => qualityRx.test(x)).slice(0, 40))];
+    const dubbing = [...new Set(nodes.map(textOf).filter(x => dubRx.test(x)).slice(0, 60))];
+    const sources = [...new Set(nodes.map(textOf).filter(x => /источник|source|плеер|player|kodik|alloha|sibnet|lumex|collaps|cdn/i.test(x)).slice(0, 40))];
+    return { quality, dubbing, sources, url: location.href, title: document.title };
+  })()`);
+  return result || { quality: [], dubbing: [], sources: [] };
+}
+
+async function selectPlaybackOption(kind, value) {
+  const target = String(value || '').trim();
+  if (!target || !['quality', 'dubbing', 'source'].includes(kind)) return { ok: false, reason: 'invalid' };
+  const result = await executeGuest(`(() => {
+    const target = ${JSON.stringify(target)};
+    const kind = ${JSON.stringify(kind)};
+    const normalize = value => String(value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+    const needle = normalize(target);
+    const nodes = Array.from(document.querySelectorAll('button,a,[role="button"],option'));
+    const el = nodes.find(node => normalize(node.innerText || node.textContent || node.getAttribute('aria-label') || node.title).includes(needle));
+    if (!el) return { ok:false, reason:'not-found', kind, value:target };
+    try { el.click(); } catch {}
+    return { ok:true, kind, value:target };
+  })()`, true);
+  return result || { ok: false, reason: 'not-found' };
+}
+
+async function smartSelectPlayback(preferences = {}) {
+  const options = await inspectPlaybackOptions();
+  const prefs = {
+    dubbing: Array.isArray(preferences.dubbing) ? preferences.dubbing : [],
+    quality: Array.isArray(preferences.quality) ? preferences.quality : [],
+    source: Array.isArray(preferences.source) ? preferences.source : [],
+  };
+  const choose = async (kind, available, preferred) => {
+    for (const pref of preferred) {
+      const exact = available.find(item => String(item).toLowerCase() === String(pref).toLowerCase());
+      const partial = available.find(item => String(item).toLowerCase().includes(String(pref).toLowerCase()));
+      const selected = exact || partial;
+      if (selected) return selectPlaybackOption(kind, selected);
+    }
+    return { ok:false, reason:'no-preference-match' };
+  };
+  const dubbing = await choose('dubbing', options.dubbing, prefs.dubbing);
+  const quality = await choose('quality', options.quality, prefs.quality);
+  const source = await choose('source', options.sources, prefs.source);
+  return { ok: dubbing.ok || quality.ok || source.ok, options, selected: { dubbing, quality, source } };
+}
+
+async function smartFallback(preferences = {}) {
+  const attempts = [];
+  const sourcePrefs = Array.isArray(preferences.source) ? preferences.source : [];
+  const options = await inspectPlaybackOptions();
+  const candidates = [...sourcePrefs, ...options.sources].filter(Boolean);
+  for (const candidate of [...new Set(candidates)]) {
+    const result = await selectPlaybackOption('source', candidate);
+    attempts.push({ candidate, ok: !!result?.ok });
+    if (result?.ok) return { ok:true, selected:candidate, attempts, options };
+  }
+  return { ok:false, attempts, options };
+}
+
 function seekVideo(seconds) {
   return executeGuest(`(() => { const v = Array.from(document.querySelectorAll('video')); if (!v.length) return false; const active = v.find(x => !x.paused && !x.ended) || v[0]; active.currentTime = Math.max(0, Math.min(Number.isFinite(active.duration) ? active.duration : active.currentTime + ${Number(seconds)}, active.currentTime + ${Number(seconds)})); return true; })()`);
 }
@@ -522,11 +938,14 @@ function takeScreenshot() {
   (async () => {
     try {
       const image = await win.capturePage();
-      const filePath = path.join(screenshotsDir, `AnimeOn-${formatTimestamp()}.png`);
+      const url=String(siteWc?.getURL?.()||'');
+      let title='AnimeOn';
+      try { title=await siteWc?.executeJavaScript('document.title||\"AnimeOn\"',false) || title; } catch {}
+      const filePath = path.join(screenshotsDir, `${sanitizeName(pageLabel(url,title))}-${formatTimestamp()}.png`);
       fs.writeFileSync(filePath, image.toPNG());
-      win.webContents.send('toast', { message: 'Скриншот сохранён' });
+      win.webContents.send('toast', { message: `Скриншот сохранён: ${path.basename(filePath)}` });
       win.webContents.send('screenshots:changed');
-    } catch {}
+    } catch (e) { writeLog('error','Screenshot failed',{error:String(e?.message||e)}); }
   })();
 }
 
@@ -571,40 +990,30 @@ function toggleTrayWindow() {
   }
 }
 
-function registerGlobalHotkeys() {
-  globalShortcut.unregisterAll();
-  const defaults = {
-    show: 'Control+Alt+A',
-    toggleWindow: 'Control+Alt+T',
-    playPause: 'Control+Alt+P',
-    volumeUp: 'Control+Alt+Up',
-    volumeDown: 'Control+Alt+Down',
-    mute: 'Control+Alt+M',
-    seekBack: 'Control+Alt+Left',
-    seekForward: 'Control+Alt+Right',
-    fullscreen: 'Control+Alt+F',
-    settings: 'Control+Alt+S',
-    reload: 'Control+Alt+R',
-    screenshot: 'Control+Alt+Shift+S',
-    alwaysOnTop: 'Control+Alt+O',
-    next: 'Control+Alt+PageDown',
-    previous: 'Control+Alt+PageUp',
-    trayMenu: 'Control+Alt+Y',
-    command: 'Control+Alt+K',
-    home: 'Control+Alt+H',
-    back: 'Control+Alt+J',
-    forward: 'Control+Alt+L',
-    zoomIn: 'Control+Alt+=',
-    zoomOut: 'Control+Alt+-',
-    zoomReset: 'Control+Alt+0',
-    switchSite: 'Control+Alt+W',
-    openBrowser: 'Control+Alt+B',
+function acceleratorFromInput(input) {
+  if (!input || input.type !== 'keyDown') return '';
+  const parts = [];
+  if (input.control) parts.push('Control');
+  if (input.alt) parts.push('Alt');
+  if (input.shift) parts.push('Shift');
+  if (input.meta) parts.push('Command');
+  const keyMap = {
+    ' ': 'Space', Escape: 'Esc', ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right',
+    PageUp: 'PageUp', PageDown: 'PageDown', Enter: 'Enter', Tab: 'Tab', Backspace: 'Backspace', Delete: 'Delete',
+    Insert: 'Insert', Home: 'Home', End: 'End', Add: '+', Subtract: '-', Multiply: '*', Divide: '/'
   };
-  const keys = { ...defaults, ...(config.hotkeys || {}) };
-  const actions = {
+  let key = keyMap[input.key] || input.key;
+  if (/^F([1-9]|1[0-9]|2[0-4])$/i.test(key)) key = key.toUpperCase();
+  if (key.length === 1) key = key.toUpperCase();
+  if (['Control', 'Alt', 'Shift', 'Meta'].includes(key)) return '';
+  return [...parts, key].join('+');
+}
+
+function localHotkeyActions() {
+  return {
     show: showMainWindow,
     toggleWindow: toggleTrayWindow,
-    playPause: togglePlayback,
+    playPause: () => togglePlayback(),
     volumeUp: () => setVolume(5),
     volumeDown: () => setVolume(-5),
     mute: () => setMuted(null),
@@ -612,7 +1021,7 @@ function registerGlobalHotkeys() {
     seekForward: () => seekVideo(10),
     fullscreen: () => { if (win) win.setFullScreen(!win.isFullScreen()); },
     settings: () => { showMainWindow(); win?.webContents.send('open-settings'); },
-    reload: () => win?.webContents.send('restart-webview'),
+    reload: () => siteWc?.reload(),
     screenshot: takeScreenshot,
     alwaysOnTop: toggleAlwaysOnTop,
     next: () => mediaAction('next'),
@@ -628,29 +1037,41 @@ function registerGlobalHotkeys() {
     switchSite: () => win?.webContents.send('switch-site'),
     openBrowser: () => siteWc && shell.openExternal(siteWc.getURL()),
   };
-  const failed = [];
-  const registered = [];
-  const used = new Set();
+}
+
+function handleLocalHotkey(input, event) {
+  const combo = acceleratorFromInput(input);
+  if (!combo) return false;
+  const keys = config.hotkeys && typeof config.hotkeys === 'object' ? config.hotkeys : {};
+  const actions = localHotkeyActions();
+  const normalized = combo.toLowerCase();
   for (const [key, action] of Object.entries(actions)) {
     const accelerator = String(keys[key] || '').trim();
-    if (!accelerator || typeof action !== 'function') continue;
-    const normalized = accelerator.toLowerCase();
-    if (used.has(normalized)) {
-      failed.push({ key, accelerator, reason: 'duplicate' });
-      continue;
-    }
-    used.add(normalized);
+    if (!accelerator || accelerator.toLowerCase() !== normalized) continue;
+    try { action(); } catch (error) { console.error(`[AnimeOn] Hotkey ${key} failed:`, error); }
+    if (event) event.preventDefault();
+    return true;
+  }
+  return false;
+}
+
+function registerGlobalHotkeys() {
+  globalShortcut.unregisterAll();
+  const registered = [];
+  const failed = [];
+  for (const [accelerator, action] of [
+    ['MediaPlayPause', () => mediaAction('playpause')],
+    ['MediaNextTrack', () => mediaAction('next')],
+    ['MediaPreviousTrack', () => mediaAction('previous')],
+  ]) {
     try {
-      if (globalShortcut.register(accelerator, action)) registered.push({ key, accelerator });
-      else failed.push({ key, accelerator, reason: 'unavailable' });
+      if (globalShortcut.register(accelerator, action)) registered.push({ key: accelerator, accelerator });
+      else failed.push({ key: accelerator, accelerator, reason: 'unavailable' });
     } catch (error) {
-      failed.push({ key, accelerator, reason: String(error?.message || error) });
+      failed.push({ key: accelerator, accelerator, reason: String(error?.message || error) });
     }
   }
-  try { globalShortcut.register('MediaPlayPause', () => mediaAction('playpause')); } catch {}
-  try { globalShortcut.register('MediaNextTrack', () => mediaAction('next')); } catch {}
-  try { globalShortcut.register('MediaPreviousTrack', () => mediaAction('previous')); } catch {}
-  return { registered, failed };
+  return { registered, failed, mode: 'local' };
 }
 
 function showMainWindow() {
@@ -702,7 +1123,7 @@ function toggleTrayMenu() {
     trayMenuWin.hide();
     return;
   }
-  const [w, h] = [205, 177];
+  const [w, h] = [220, 166];
   const cursor = screen.getCursorScreenPoint();
   const trayBounds = tray && !tray.isDestroyed() ? tray.getBounds() : null;
   const anchor = trayBounds && trayBounds.width > 0 && trayBounds.height > 0
@@ -748,6 +1169,7 @@ function toggleTrayMenu() {
 }
 
 ipcMain.on('tray-action', (_, action) => {
+  if (trayMenuWin && !trayMenuWin.isDestroyed()) trayMenuWin.hide();
   if (action === 'open') {
     showMainWindow();
   }
@@ -758,6 +1180,10 @@ ipcMain.on('tray-action', (_, action) => {
   }
   if (action === 'menu') { toggleTrayMenu(); }
   if (action === 'menu-reload') { if (siteWc && !siteWc.isDestroyed()) siteWc.reload(); }
+  if (action === 'visit-site') { shell.openExternal((config.siteList && config.siteList[0]?.url) || 'https://animeon.cc'); }
+  if (action === 'playpause') mediaAction('playpause');
+  if (action === 'next') mediaAction('next');
+  if (action === 'previous') mediaAction('previous');
   if (action === 'quit') {
     quitting = true;
     app.exit(0);
@@ -774,14 +1200,32 @@ ipcMain.on('cfg:set', (_, patch) => {
   applySideEffects(patch);
 });
 
+ipcMain.handle('library:get', () => ({ library: config.library }));
+ipcMain.handle('library:set', (_, library) => {
+  if (!library || typeof library !== 'object') return { ok: false };
+  for (const key of ['favorites','continueWatching','localHistory']) {
+    if (Array.isArray(library[key])) config.library[key] = library[key].slice(0, 500);
+  }
+  saveConfig();
+  return { ok: true, library: config.library };
+});
+ipcMain.handle('library:clear-history', () => {
+  config.library.localHistory = [];
+  config.library.continueWatching = [];
+  saveConfig();
+  return { ok: true };
+});
+
 ipcMain.on('open-external', (_, url) => {
   if (/^(https?|tg):\/\//i.test(url) || /^tg:/i.test(url)) shell.openExternal(url);
 });
 
 ipcMain.on('app:open-data-folder', () => { shell.openPath(app.getPath('userData')).catch(() => {}); });
 
+ipcMain.handle('dnd:set', (_, enabled) => { config.doNotDisturb = !!enabled; saveConfig(); return {ok:true,enabled:config.doNotDisturb}; });
+
 ipcMain.on('notify', (_, { title, body }) => {
-  if (!Notification.isSupported() || !title) return;
+  if (config.doNotDisturb || !Notification.isSupported() || !title) return;
   const n = new Notification({ title: String(title).slice(0, 80), body: String(body || '').slice(0, 160), icon: path.join(__dirname, '../assets', 'logo.png'), silent: false });
   n.on('click', () => {
     if (!win) return;
@@ -812,6 +1256,7 @@ ipcMain.handle('app:diagnostics', async () => {
   } catch {}
   return {
     version: app.getVersion(),
+    api: { baseUrl: API_BASE, clientVersion: API_VERSION },
     electron: process.versions.electron,
     chrome: process.versions.chrome,
     node: process.versions.node,
@@ -835,7 +1280,7 @@ ipcMain.handle('app:clear-site-data', async () => {
   } catch (e) { return { ok: false, error: String(e?.message || e) }; }
 });
 
-const EXPORT_KEYS = ['theme','custom','site','remember','notify','autostart','tray','compact','confirmClose','autoRecovery','performance','lowPower','autoHide','closeBehavior','alwaysOnTop','hotkeys','customCss','smoothSite','visual','profiles','lastUrl','history','favorites'];
+const EXPORT_KEYS = ['theme','custom','site','siteList','remember','notify','autostart','tray','compact','confirmClose','autoRecovery','performance','lowPower','autoHide','closeBehavior','alwaysOnTop','hotkeys','customCss','smoothSite','visual','profiles','lastUrl','history','favorites','api','playbackPositions','playbackSpeed','library','resumeEnabled','autoNext','recentPages','pageFavorites','tabs','activeTab','tabsFixedV2','doNotDisturb','sleepTimer','autoCacheCleanup','cacheLimitMB','errorLog','memorySaver','startupPolicyFixed'];
 
 ipcMain.handle('settings:export', async () => {
   try {
@@ -875,23 +1320,188 @@ ipcMain.handle('settings:import', async () => {
 
 ipcMain.handle('settings:reset', async () => {
   try {
-    const defaults = { theme:'violet', custom:'#8b5cf6', site:'', remember:'0', notify:false, autostart:false, tray:false, compact:false, confirmClose:false, autoRecovery:true, performance:'balanced', lowPower:false, autoHide:true, closeBehavior:'ask', alwaysOnTop:false, hotkeys:{}, customCss:{cc:'',co:''}, smoothSite:true, visual:{radius:18,opacity:96,blur:0,scale:100,density:100,accentGlow:55,animations:'smooth'}, profiles:{} };
+    const defaults = { theme:'violet', custom:'#8b5cf6', site:'co', remember:'0', notify:false, autostart:false, tray:false, compact:false, confirmClose:false, autoRecovery:true, performance:'balanced', lowPower:false, autoHide:true, closeBehavior:'ask', alwaysOnTop:false, resumeEnabled:true, autoNext:false, hotkeys:{}, customCss:{cc:'',co:''}, siteList:[{id:'one',url:'https://animeon.cc/',label:'animeon.cc'},{id:'two',url:'https://v1.animeon.co/',label:'v1.animeon.co'}], smoothSite:true, visual:{radius:18,opacity:96,blur:0,scale:100,density:100,accentGlow:55,animations:'smooth'}, profiles:{} };
     Object.assign(config, defaults); saveConfig(); applySideEffects({ autostart:true, tray:true });
     return { ok: true, settings: config };
   } catch (e) { return { ok:false, error:String(e?.message || e) }; }
 });
 
+ipcMain.handle('pages:recent', () => ({ ok:true, items:config.recentPages||[] }));
+ipcMain.handle('pages:recent-add', (_, item) => {
+  const url=normalizePageUrl(item?.url);
+  if(!url) return {ok:false};
+  rememberRecentPage(url, String(item?.title||''));
+  return {ok:true,items:config.recentPages||[]};
+});
+
+ipcMain.handle('pages:favorites', () => ({ ok:true, items:config.pageFavorites||[] }));
+ipcMain.handle('pages:favorite-toggle', (_, item) => {
+  const url=String(item?.url||'');
+  let valid=false;
+  try { const u=new URL(url); valid=(u.protocol==='http:'||u.protocol==='https:') && /(^|\.)animeon\.(cc|co)$/i.test(u.hostname); } catch {}
+  if(!valid) return {ok:false,error:'bad url'};
+  const idx=(config.pageFavorites||[]).findIndex(x=>(typeof x==='string'?x:x?.url)===url);
+  if(idx>=0) config.pageFavorites.splice(idx,1); else config.pageFavorites.unshift({url,title:pageLabel(url,item?.title||'')});
+  config.pageFavorites=config.pageFavorites.slice(0,100); saveConfig(); return {ok:true,favorite:idx<0,items:config.pageFavorites};
+});
+ipcMain.handle('tabs:get',()=>({ok:true,tabs:config.tabs||[],activeTab:config.activeTab||0}));
+ipcMain.handle('tabs:set',(_,tabs,active=0)=>{ config.tabs=Array.isArray(tabs)?tabs.slice(0,12):[]; config.activeTab=Math.max(0,Math.min(Math.max(0,config.tabs.length-1),Number(active)||0)); saveConfig(); return {ok:true,tabs:config.tabs,activeTab:config.activeTab}; });
+ipcMain.handle('find:start',(_,text)=>{ if(!siteWc||siteWc.isDestroyed()) return {ok:false}; const t=String(text||''); if(!t){try{siteWc.stopFindInPage('clearSelection')}catch{} return {ok:true};} return {ok:true,id:siteWc.findInPage(t,{findNext:false,matchCase:false})}; });
+ipcMain.handle('find:stop',()=>{try{siteWc?.stopFindInPage('clearSelection');}catch{} return {ok:true};});
+ipcMain.handle('sleep:set',(_,minutes,action)=>setSleepTimer(minutes,action));
+ipcMain.handle('sleep:get',()=>config.sleepTimer);
+ipcMain.handle('logs:get',()=>{ try { const text=fs.existsSync(logPath)?fs.readFileSync(logPath,'utf8'):''; return {ok:true,path:logPath,text:text.slice(-120000)}; } catch(e){return {ok:false,error:String(e?.message||e)}}});
+ipcMain.handle('logs:open',async()=>{try{fs.mkdirSync(path.dirname(logPath),{recursive:true});if(!fs.existsSync(logPath))fs.writeFileSync(logPath,'','utf8');const error=await shell.openPath(logPath);return {ok:!error,path:logPath,error:error||''};}catch(e){return {ok:false,path:logPath,error:String(e?.message||e)}}});
+ipcMain.handle('logs:copy',()=>{try{const text=fs.existsSync(logPath)?fs.readFileSync(logPath,'utf8'):'';clipboard.writeText(text);return {ok:true}}catch(e){return {ok:false,error:String(e?.message||e)}}});
+ipcMain.handle('logs:clear',()=>{try{fs.writeFileSync(logPath,'','utf8');config.errorLog=[];saveConfig();return {ok:true}}catch(e){return {ok:false,error:String(e?.message||e)}}});
+ipcMain.handle('cache:settings',(_,patch)=>{ if(patch&&typeof patch==='object'){if('auto' in patch)config.autoCacheCleanup=!!patch.auto;if('limitMB' in patch)config.cacheLimitMB=Math.max(64,Math.min(16384,Number(patch.limitMB)||512));saveConfig();} return {ok:true,auto:config.autoCacheCleanup,limitMB:config.cacheLimitMB};});
+ipcMain.handle('cache:info',async()=>{try{return {ok:true,size:await session.defaultSession.getCacheSize(),limitMB:Number(config.cacheLimitMB)||512,auto:!!config.autoCacheCleanup}}catch(e){return {ok:false,error:String(e?.message||e)}}});
+ipcMain.handle('memory:saver',(_,enabled)=>{config.memorySaver=!!enabled;saveConfig();try{siteWc?.setBackgroundThrottling(config.memorySaver||config.performance==='economy')}catch{}return {ok:true,enabled:config.memorySaver};});
+
+
+ipcMain.handle('sites:fetch', async () => {
+  try {
+    const res = await fetch('https://raw.githubusercontent.com/Neukluziy/testip/main/ip.txt', { signal: AbortSignal.timeout(10000) });
+    const text = await res.text();
+    const lines = text.split(/\r?\n/).filter(l => l.trim());
+    const sites = [];
+    for (const line of lines) {
+      const m = line.match(/^(\w+)\s*=\s*(.+)$/);
+      if (m) {
+        const label = m[2].trim();
+        sites.push({ id: m[1].trim(), url: `https://${label}/`, label });
+      }
+    }
+    if (sites.length >= 2) {
+      config.siteList = sites;
+      saveConfig();
+    }
+    return { ok: true, sites };
+  } catch (e) {
+    return { ok: false, error: String(e?.message || e), sites: config.siteList || [] };
+  }
+});
+ipcMain.handle('sites:get', () => {
+  return { ok: true, sites: config.siteList || [] };
+});
+
 ipcMain.handle('app:connection-check', async () => {
-  const urls = ['https://animeon.cc/', 'https://v1.animeon.co/'];
   const results = [];
-  for (const url of urls) {
+  const siteList = config.siteList || [
+    { id: 'one', url: 'https://animeon.cc/', label: 'animeon.cc' },
+    { id: 'two', url: 'https://v2.animeon.co/', label: 'v2.animeon.co' }
+  ];
+  for (const site of siteList) {
+    const url = site.url;
     const started = Date.now();
     try {
       const res = await fetch(url, { method: 'HEAD', redirect: 'follow', signal: AbortSignal.timeout(8000), headers: { 'User-Agent': 'AnimeOn-Desktop' } });
       results.push({ url, ok: res.ok || res.status < 500, status: res.status, ms: Date.now()-started });
     } catch (e) { results.push({ url, ok:false, status:0, ms:Date.now()-started, error:String(e?.message || e) }); }
   }
-  return { internet: results.some(r => r.ok), results };
+  let api = { ok:false, status:0, ms:0, results:[] };
+  try { api = await apiHealth(); } catch (e) { api = { ok:false, status:0, ms:0, results:[], error:String(e?.message || e) }; }
+  const internet = results.some(r => r.ok) || api.ok;
+  writeLog(internet ? 'info' : 'warn', 'Проверка соединения', { internet, results, api });
+  return { internet, api, results };
+});
+
+ipcMain.handle('api:health', async () => apiHealth());
+ipcMain.handle('api:get', async (_, path, query) => {
+  try { return await apiGet(path, query); }
+  catch (e) { return { ok:false, status:0, ms:0, error:String(e?.message || e) }; }
+});
+ipcMain.handle('api:post', async (_, path, body) => {
+  try { return await apiPost(path, body); }
+  catch (e) { return { ok:false, status:0, ms:0, error:String(e?.message || e) }; }
+});
+ipcMain.handle('api:request', async (_, path, options) => {
+  try { return await apiRequest(path, options || {}); }
+  catch (e) { return { ok:false, status:0, ms:0, error:String(e?.message || e) }; }
+});
+ipcMain.handle('animeon:search', async (_, query, options = {}) => {
+  try {
+    const q = String(query || '').trim();
+    if (!q) return { ok: true, items: [], query: '' };
+    const result = await apiGet('/api/search', { q, query: q, page: options.page || 1, limit: options.limit || 20 });
+    return normalizeAnimeCollection(result, q);
+  } catch (e) {
+    return { ok: false, items: [], query: String(query || ''), error: String(e?.message || e) };
+  }
+});
+
+ipcMain.handle('animeon:filters', async () => {
+  try {
+    const result = await apiGet('/api/anime/filters');
+    return { ...result, filters: result.data?.filters || result.data || {} };
+  } catch (e) { return { ok:false, filters:{}, error:String(e?.message || e) }; }
+});
+
+ipcMain.handle('animeon:schedule', async (_, options = {}) => {
+  try {
+    const result = await apiGet('/api/anime/schedule', options);
+    return { ...result, schedule: normalizeDataList(result.data) };
+  } catch (e) { return { ok:false, schedule:[], error:String(e?.message || e) }; }
+});
+
+ipcMain.handle('animeon:watching-now', async (_, options = {}) => {
+  try {
+    const result = await apiGet('/api/anime/watching-now', options);
+    return { ...result, items: normalizeDataList(result.data) };
+  } catch (e) { return { ok:false, items:[], error:String(e?.message || e) }; }
+});
+
+ipcMain.handle('animeon:watchlist-counts', async () => {
+  try {
+    const result = await apiGet('/api/user/watchlist/counts');
+    return { ...result, counts: result.data?.counts || result.data || {} };
+  } catch (e) { return { ok:false, counts:{}, error:String(e?.message || e) }; }
+});
+
+ipcMain.handle('animeon:history', async (_, options = {}) => {
+  try {
+    const result = await apiGet('/api/user/history', options);
+    return { ...result, items: normalizeDataList(result.data) };
+  } catch (e) { return { ok:false, items:[], error:String(e?.message || e) }; }
+});
+
+ipcMain.handle('animeon:notifications', async (_, options = {}) => {
+  try {
+    const result = await apiGet('/api/user/notifications', options);
+    return { ...result, items: normalizeDataList(result.data) };
+  } catch (e) { return { ok:false, items:[], error:String(e?.message || e) }; }
+});
+
+function normalizeDataList(data) {
+  if (Array.isArray(data)) return data;
+  if (!data || typeof data !== 'object') return [];
+  for (const key of ['items','results','anime','data','entries','history','schedule','watching']) {
+    if (Array.isArray(data[key])) return data[key];
+  }
+  return [];
+}
+
+function normalizeAnimeCollection(result, query) {
+  const items = normalizeDataList(result.data).map(item => {
+    if (!item || typeof item !== 'object') return { title: String(item) };
+    return {
+      ...item,
+      title: item.title || item.name || item.russian || item.russian_title || item.english || item.japanese || 'Без названия',
+      url: item.url || item.link || item.path || '',
+      poster: item.poster || item.image || item.cover || item.poster_url || item.image_url || '',
+      id: item.id || item.anime_id || item.animeId || null,
+    };
+  });
+  return { ...result, query, items };
+}
+
+ipcMain.handle('api:session', async () => {
+  try {
+    const result = await apiGet('/api/auth/session');
+    return { ...result, authenticated: !!(result.ok && (result.data?.user || result.data?.authenticated || result.data?.session)) };
+  } catch (e) {
+    return { ok:false, status:0, ms:0, authenticated:false, error:String(e?.message || e) };
+  }
 });
 
 ipcMain.handle('app:clear-cache', async () => {
@@ -929,6 +1539,48 @@ ipcMain.on('app:set-performance', (_, mode) => {
   if (win && !win.isDestroyed()) win.webContents.send('performance-mode', config.performance);
 });
 
+const apiCacheDir = path.join(app.getPath('userData'), 'api-cache');
+function ensureApiCacheDir() { try { fs.mkdirSync(apiCacheDir, { recursive: true }); } catch {} }
+function getApiCacheSize() {
+  ensureApiCacheDir();
+  let bytes = 0;
+  try { for (const f of fs.readdirSync(apiCacheDir)) { try { bytes += fs.statSync(path.join(apiCacheDir, f)).size; } catch {} } } catch {}
+  return bytes;
+}
+ipcMain.handle('system:cache-info', async () => {
+  let sessionCache = 0;
+  try { sessionCache = await session.defaultSession.getCacheSize(); } catch {}
+  return { ok: true, apiCacheMB: Math.round(getApiCacheSize() / 1048576 * 10) / 10, sessionCacheMB: Math.round(sessionCache / 1048576 * 10) / 10, screenshots: fs.existsSync(screenshotsDir) ? fs.readdirSync(screenshotsDir).filter(x => /\.png$/i.test(x)).length : 0 };
+});
+ipcMain.handle('system:clear-api-cache', async () => {
+  try { ensureApiCacheDir(); for (const f of fs.readdirSync(apiCacheDir)) { try { fs.unlinkSync(path.join(apiCacheDir, f)); } catch {} } return { ok:true }; } catch (e) { return { ok:false, error:String(e?.message || e) }; }
+});
+ipcMain.handle('system:status', async () => {
+  const metrics = app.getAppMetrics();
+  const memory = Math.round(process.memoryUsage().rss / 1048576);
+  const sitePid = siteWc && !siteWc.isDestroyed() ? siteWc.getProcessId() : 0;
+  const siteMetric = metrics.find(x => x.pid === sitePid);
+  let api = null;
+  try { api = await apiHealth(); } catch {}
+  return { ok:true, uptime: Math.round(process.uptime()), memoryMB:memory, siteMemoryMB:siteMetric ? Math.round(siteMetric.memory.workingSetSize / 1024) : 0, api, gpu: app.getGPUFeatureStatus ? app.getGPUFeatureStatus() : {}, cache: { apiCacheMB: Math.round(getApiCacheSize() / 1048576 * 10) / 10 }, performance: config.performance, autoRecovery: config.autoRecovery !== false };
+});
+ipcMain.handle('profiles:get', () => ({ ok:true, profiles: config.profiles || {} }));
+ipcMain.handle('profiles:save', (_, name, data) => {
+  const key = String(name || '').trim().slice(0, 40);
+  if (!key) return { ok:false, error:'Пустое имя профиля' };
+  if (!config.profiles || typeof config.profiles !== 'object') config.profiles = {};
+  config.profiles[key] = { ...(data && typeof data === 'object' ? data : {}), updatedAt: Date.now() };
+  saveConfig();
+  return { ok:true, profiles:config.profiles };
+});
+ipcMain.handle('profiles:delete', (_, name) => {
+  const key = String(name || '');
+  if (config.profiles && Object.prototype.hasOwnProperty.call(config.profiles, key)) delete config.profiles[key];
+  saveConfig();
+  return { ok:true, profiles:config.profiles || {} };
+});
+ipcMain.handle('profiles:load', (_, name) => ({ ok:!!config.profiles?.[String(name || '')], profile:config.profiles?.[String(name || '')] || null }));
+
 ipcMain.handle('site:memory', async () => {
   try {
     const metrics = app.getAppMetrics();
@@ -945,9 +1597,17 @@ ipcMain.on('site:navigate', (_, url) => {
 
 ipcMain.on('media:volume', (_, delta) => setVolume(Number(delta) || 0).then(v => { if (v && win && !win.isDestroyed()) win.webContents.send('media-overlay', { type: 'volume', value: v.volume, muted: v.muted }); }));
 ipcMain.handle('media:volume-state', () => volumeState);
+ipcMain.handle('media:state', async () => { const state = await getMediaState(); return { available: !!state, url: String(siteWc?.getURL?.() || ''), ...(state || {}) }; });
+ipcMain.handle('media:speed', async (_, value) => { try { return { ok:true, speed: await setPlaybackSpeed(value) }; } catch (e) { return { ok:false, error:String(e?.message || e) }; } });
+ipcMain.handle('media:pip', async () => { try { return await togglePictureInPicture(); } catch (e) { return { ok:false, reason:String(e?.message || e) }; } });
+ipcMain.handle('media:options', async () => { try { return await inspectPlaybackOptions(); } catch (e) { return { quality:[], dubbing:[], sources:[], error:String(e?.message || e) }; } });
+ipcMain.handle('media:select-option', async (_, kind, value) => { try { return await selectPlaybackOption(kind, value); } catch (e) { return { ok:false, reason:String(e?.message || e) }; } });
+ipcMain.handle('media:smart-select', async (_, preferences) => { try { return await smartSelectPlayback(preferences || {}); } catch (e) { return { ok:false, error:String(e?.message || e) }; } });
+ipcMain.handle('media:fallback', async (_, preferences) => { try { return await smartFallback(preferences || {}); } catch (e) { return { ok:false, error:String(e?.message || e) }; } });
 ipcMain.on('media:mute', () => setMuted(null).then(v => { if (v && win && !win.isDestroyed()) win.webContents.send('media-overlay', { type: 'volume', value: v.volume, muted: v.muted }); }));
 ipcMain.on('media:seek', (_, seconds) => { const n = Number(seconds) || 0; seekVideo(n).then(ok => { if (ok && win && !win.isDestroyed()) win.webContents.send('media-overlay', { type: 'seek', value: n }); }); });
 ipcMain.on('media:action', (_, action) => mediaAction(action));
+startMediaPolling();
 ipcMain.on('app:screenshot', takeScreenshot);
 
 ipcMain.handle('screenshots:list', async () => {
@@ -1123,10 +1783,10 @@ function openUpdateWindow() {
     return;
   }
   updateWindow = new BrowserWindow({
-    width: 460,
-    height: 580,
-    minWidth: 380,
-    minHeight: 440,
+    width: 520,
+    height: 690,
+    minWidth: 440,
+    minHeight: 560,
     frame: false,
     show: false,
     backgroundColor: '#0f0d14',
@@ -1273,7 +1933,13 @@ ipcMain.on('app:info', (e) => {
 });
 
 app.whenReady().then(() => {
-  saveConfig();
+  registerProtocol();
+  if (!config.startupPolicyFixed) {
+    config.autostart = false;
+    config.startupPolicyFixed = true;
+    try { app.setLoginItemSettings({ openAtLogin: false }); } catch {}
+    saveConfig();
+  }
   createWindow();
   ensureTray();
 
@@ -1284,6 +1950,7 @@ app.whenReady().then(() => {
   if (process.argv.includes('--settings')) setTimeout(() => win?.webContents.send('open-settings'), 900);
   if (process.argv.includes('--reload')) setTimeout(() => win?.webContents.send('restart-webview'), 1200);
   registerGlobalHotkeys();
+  handleStartupDeepLink(process.argv);
 });
 
 app.on('will-quit', () => {
