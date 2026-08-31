@@ -10,6 +10,10 @@ if (cfg.theme === 'custom' && cfg.custom) {
 }
 
 const versionEl = document.getElementById('ud-version');
+const currentEl = document.getElementById('ud-current');
+const latestEl = document.getElementById('ud-latest');
+const statusTitleEl = document.getElementById('ud-status-title');
+const downloadCard = document.getElementById('download-card');
 const notesEl = document.getElementById('ud-notes');
 const statusEl = document.getElementById('ud-status');
 const progressEl = document.getElementById('ud-progress');
@@ -25,6 +29,8 @@ let downloading = false;
 window.native.onUpdData((info) => {
   if (!info) return;
   versionEl.textContent = `v${info.current} → v${info.latest}`;
+  currentEl.textContent = `v${info.current}`;
+  latestEl.textContent = `v${info.latest}`;
   const notes = (info.notes || '').trim();
   notesEl.textContent = notes || 'Описание обновления не добавлено.';
   if (!notes) notesEl.classList.add('dim');
@@ -42,7 +48,9 @@ function setProgress(pct, stage, extra={}) {
   if(speedEl) speedEl.textContent=stage==='download'?formatSpeed(extra.speed):'';
   if(sizeEl) sizeEl.textContent=stage==='download'?`${formatBytes(extra.received)} / ${formatBytes(extra.total)}`:'';
   if (stage === 'ready') {
+    statusTitleEl.textContent = 'Обновление скачано';
     statusEl.textContent = 'Готово. Программа сейчас перезапустится';
+    downloadCard.classList.add('state-ready');
     statusEl.className = 'ud-status ok';
     setTimeout(() => window.native.updInstall(), 700);
   }
@@ -55,7 +63,10 @@ btnDownload.addEventListener('click', async () => {
   downloading = true;
   btnDownload.disabled = true;
   btnLater.classList.add('hidden');
-  statusEl.textContent = 'Скачиваю обновление…';
+  statusTitleEl.textContent = 'Скачивание обновления';
+  statusEl.textContent = 'Загружаю новую версию, это может занять некоторое время…';
+  downloadCard.classList.remove('state-error','state-ready');
+  downloadCard.classList.add('state-downloading');
   statusEl.className = 'ud-status';
 
   const res = await window.native.updDownload();
@@ -64,7 +75,10 @@ btnDownload.addEventListener('click', async () => {
     btnDownload.disabled = false;
     btnLater.classList.remove('hidden');
     progressEl.classList.add('hidden');
+    statusTitleEl.textContent = 'Не удалось скачать обновление';
     statusEl.textContent = 'Не получилось скачать: ' + ((res && res.error) || 'неизвестная ошибка');
+    downloadCard.classList.remove('state-downloading','state-ready');
+    downloadCard.classList.add('state-error');
     statusEl.className = 'ud-status err';
   }
 });
