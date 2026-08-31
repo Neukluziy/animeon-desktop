@@ -2,42 +2,81 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8" />
-  <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; script-src 'self'" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; script-src 'self'" />
   <title>Обновление AnimeOn</title>
   <link rel="stylesheet" href="../styles/update.css" />
 </head>
 <body>
-  <div class="upd-card">
-    <header class="ud-head" id="drag">
-      <img src="assets/logo.png" alt="" draggable="false">
-      <div class="ud-titles">
-        <b>Обновление</b>
-        <i id="ud-version"></i>
+  <main class="update-window">
+    <header class="update-top" id="drag">
+      <div class="brand-mark">
+        <img src="../assets/logo.png" alt="AnimeOn" draggable="false">
       </div>
-      <button id="btn-close" title="Закрыть">
-        <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
-      </button>
+      <div class="brand-copy">
+        <span>AnimeOn Desktop</span>
+        <strong>Обновление приложения</strong>
+      </div>
+      <button class="close-btn" id="btn-close" aria-label="Закрыть">×</button>
     </header>
 
-    <div class="ud-body">
-      <div class="ud-label">Что нового</div>
-      <div class="ud-notes" id="ud-notes">Загружаю описание…</div>
-    </div>
+    <section class="update-hero">
+      <div class="hero-glow"></div>
+      <div class="hero-icon">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v11m0 0 4-4m-4 4-4-4M5 17v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2"/></svg>
+      </div>
+      <div class="hero-copy">
+        <span class="eyebrow">ДОСТУПНО НОВОЕ ОБНОВЛЕНИЕ</span>
+        <h1>Новая версия AnimeOn</h1>
+        <p id="ud-version">Проверяем версию…</p>
+      </div>
+    </section>
 
-    <footer class="ud-foot">
-      <div class="ud-progress hidden" id="ud-progress">
-        <div class="udp-bar"><i id="udp-fill"></i></div>
-        <div class="udp-meta"><span id="udp-size">—</span><span id="udp-speed">—</span></div><span class="udp-pct" id="udp-pct">0%</span>
+    <section class="version-row">
+      <div class="version-card">
+        <span>Текущая версия</span>
+        <b id="ud-current">—</b>
       </div>
-      <p class="ud-status" id="ud-status"></p>
-      <div class="ud-btns">
-        <button class="ghost-btn accent" id="btn-download">Скачать и обновить</button>
-        <button class="ghost-btn hidden" id="btn-later">Позже</button>
+      <div class="version-arrow">→</div>
+      <div class="version-card new">
+        <span>Новая версия</span>
+        <b id="ud-latest">—</b>
       </div>
+    </section>
+
+    <section class="notes-card">
+      <div class="section-head">
+        <div>
+          <span class="eyebrow">ИЗМЕНЕНИЯ</span>
+          <h2>Что нового</h2>
+        </div>
+        <span class="release-dot"></span>
+      </div>
+      <div class="ud-notes" id="ud-notes">Загружаю описание обновления…</div>
+    </section>
+
+    <section class="download-card" id="download-card">
+      <div class="download-head">
+        <div class="download-status-icon" id="download-icon">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v10m0 0 4-4m-4 4-4-4M5 19h14"/></svg>
+        </div>
+        <div>
+          <strong id="ud-status-title">Готово к установке</strong>
+          <span id="ud-status">Нажмите кнопку ниже, чтобы скачать обновление.</span>
+        </div>
+        <span class="udp-pct" id="udp-pct">0%</span>
+      </div>
+      <div class="udp-bar"><i id="udp-fill"></i></div>
+      <div class="udp-meta"><span id="udp-size">—</span><span id="udp-speed">—</span></div>
+    </section>
+
+    <footer class="update-actions">
+      <button class="secondary-btn hidden" id="btn-later">Позже</button>
+      <button class="primary-btn" id="btn-download">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v10m0 0 4-4m-4 4-4-4M5 19h14"/></svg>
+        <span>Скачать и обновить</span>
+      </button>
     </footer>
-  </div>
-
+  </main>
   <script src="update.js"></script>
 </body>
 </html>
