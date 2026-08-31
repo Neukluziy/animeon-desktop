@@ -35,7 +35,106 @@ const __splashFallback = (() => {
     }
   };
 })();
-const wv = document.getElementById('wv');
+const webviewHost = document.getElementById('view-area');
+const firstWebview = document.getElementById('wv');
+let activeWebview = firstWebview;
+const webviewListeners = [];
+const webviewListenerMap = new WeakMap();
+
+function attachWebviewListeners(webview) {
+  if (!webview) return;
+  const wrappers = [];
+  for (const [type, listener, options] of webviewListeners) {
+    const wrapper = (event) => {
+      if (webview !== activeWebview) return;
+      try { listener(event); } catch (error) { console.error('[AnimeOn] webview listener error', error); }
+    };
+    webview.addEventListener(type, wrapper, options);
+    wrappers.push([type, listener, wrapper, options]);
+  }
+  webviewListenerMap.set(webview, wrappers);
+}
+
+const wv = new Proxy({}, {
+  get(_, property) {
+    if (property === 'addEventListener') {
+      return (type, listener, options) => {
+        if (typeof listener !== 'function') return;
+        webviewListeners.push([type, listener, options]);
+        if (activeWebview) {
+          const wrapper = (event) => {
+            if (activeWebview !== firstWebview && event?.target && event.target !== activeWebview) return;
+            if (activeWebview !== firstWebview && !event?.target) return;
+            try { listener(event); } catch (error) { console.error('[AnimeOn] webview listener error', error); }
+          };
+          activeWebview.addEventListener(type, wrapper, options);
+          const list = webviewListenerMap.get(activeWebview) || [];
+          list.push([type, listener, wrapper, options]);
+          webviewListenerMap.set(activeWebview, list);
+        }
+      };
+    }
+    if (property === 'removeEventListener') {
+      return (type, listener) => {
+        for (const webview of [firstWebview, ...(window.__animeonTabWebviews || [])]) {
+          const list = webviewListenerMap.get(webview) || [];
+          for (const item of list.slice()) {
+            if (item[0] === type && item[1] === listener) {
+              try { webview.removeEventListener(item[0], item[2], item[3]); } catch {}
+            }
+          }
+        }
+      };
+    }
+    const target = activeWebview;
+    if (!target) return undefined;
+    const value = target[property];
+    return typeof value === 'function' ? value.bind(target) : value;
+  }
+});
+
+function createTabWebview(index) {
+  if (index === 0) return firstWebview;
+  const webview = document.createElement('webview');
+  webview.id = `wv-tab-${index}`;
+  webview.setAttribute('allowpopups', '');
+  webview.setAttribute('partition', 'persist:animeon');
+  webview.setAttribute('webpreferences', 'webSecurity=no,contextIsolation=yes,sandbox=no,allowRunningInsecureContent=yes');
+  webview.className = 'animeon-tab-webview';
+  webview.style.cssText = 'display:none;visibility:hidden;position:absolute;inset:0;width:100%;height:100%;border:0;z-index:0;background:#050507;';
+  webviewHost?.appendChild(webview);
+  tabWebviews[index] = webview;
+  attachWebviewListeners(webview);
+  webview.addEventListener('dom-ready', () => {
+    if (tabWebviews[index] === webview && activeWebview === webview) {
+      try { webview.focus(); } catch {}
+      try { updateNav(); } catch {}
+      try { applyGuestStyles(); } catch {}
+    }
+  });
+  return webview;
+}
+
+const tabWebviews = [firstWebview];
+window.__animeonTabWebviews = tabWebviews;
+
+function showTabWebview(index) {
+  const target = tabWebviews[index];
+  if (!target) return false;
+  activeWebview = target;
+  tabWebviews.forEach((webview, i) => {
+    if (!webview) return;
+    const active = i === index;
+    webview.classList.toggle('tab-active', active);
+    webview.style.display = active ? 'block' : 'none';
+    webview.style.visibility = active ? 'visible' : 'hidden';
+    webview.style.width = '100%';
+    webview.style.height = '100%';
+    webview.style.zIndex = active ? '2' : '0';
+  });
+  return true;
+}
+
 const splash = document.getElementById('splash');
 const splashBarFill = document.querySelector('#splash .s-bar i');
 const splashPct = document.querySelector('.s-pct');
@@ -137,6 +236,34 @@ const errorMessage = document.getElementById('error-message');
 const btnErrorRetry = document.getElementById('btn-error-retry');
 const btnErrorMirror = document.getElementById('btn-error-mirror');
 const posterWall = document.getElementById('poster-wall');
+const pageToolbar = document.getElementById('page-toolbar');
+const tabsBar = document.getElementById('tabs-bar');
+const btnPages = document.getElementById('btn-pages');
+const btnPageFavorite = document.getElementById('btn-page-favorite');
+const btnPageFavorites = document.getElementById('btn-page-favorites');
+const btnNewTab = document.getElementById('btn-new-tab');
+const btnDnd = document.getElementById('btn-dnd');
+const findBar = document.getElementById('find-bar');
+const findInput = document.getElementById('find-input');
+const findPrev = document.getElementById('find-prev');
+const findNext = document.getElementById('find-next');
+const findClose = document.getElementById('find-close');
+const findCount = document.getElementById('find-count');
+const pagesModal = document.getElementById('pages-modal');
+const btnClosePages = document.getElementById('btn-close-pages');
+const recentPagesList = document.getElementById('recent-pages-list');
+const favoritesModal = document.getElementById('favorites-modal');
+const btnCloseFavorites = document.getElementById('btn-close-favorites');
+const favoritePagesList = document.getElementById('favorite-pages-list');
+const resumeToggle = document.getElementById('resume-toggle');
+const autoNextToggle = document.getElementById('autonext-toggle');
+const dndToggle = document.getElementById('dnd-toggle');
+const notifyAdvancedToggle = document.getElementById('notify-toggle-advanced');
+const cacheAutoToggle = document.getElementById('cache-auto-toggle');
+const cacheLimit = document.getElementById('cache-limit');
+const cacheInfoText = document.getElementById('cache-info-text');
+const memorySaverToggle = document.getElementById('memory-saver-toggle');
+
 
 let booted = false;
 
@@ -157,13 +284,69 @@ setTimeout(() => {
 }, 8000);
 let currentSite = null;
 
+const cfg = window.native.getConfig() || {};
+
 const SITES = {
   cc: { url: 'https://animeon.cc/', label: 'animeon.cc' },
   co: { url: 'https://v1.animeon.co/', label: 'v1.animeon.co' },
 };
 
-const cfg = window.native.getConfig() || {};
+function applySiteList(list) {
+  if (!Array.isArray(list) || list.length < 2) return false;
+
+  const first = list[0];
+  const second = list[1];
+  if (!first?.url || !second?.url) return false;
+
+  SITES.cc = {
+    url: String(first.url).endsWith('/') ? String(first.url) : `${String(first.url)}/`,
+    label: String(first.label || first.url).replace(/^https?:\/\//i, '').replace(/\/$/, ''),
+  };
+  SITES.co = {
+    url: String(second.url).endsWith('/') ? String(second.url) : `${String(second.url)}/`,
+    label: String(second.label || second.url).replace(/^https?:\/\//i, '').replace(/\/$/, ''),
+  };
+
+  document.querySelectorAll('[data-site-label="cc"]').forEach((el) => {
+    el.textContent = SITES.cc.label;
+  });
+  document.querySelectorAll('[data-site-label="co"]').forEach((el) => {
+    el.textContent = SITES.co.label;
+  });
+
+  document.querySelectorAll('[data-site]').forEach((el) => {
+    const id = el.dataset.site;
+    const site = SITES[id];
+    if (!site) return;
+    el.title = site.url;
+  });
+
+  if (currentSite) {
+    updateMirrorBtn();
+    updateSiteFromUrl?.(SITES[currentSite].url);
+  }
+  renderTabs();
+  return true;
+}
+
+try {
+  applySiteList(cfg.siteList);
+} catch {}
+
+async function loadSitesFromRemote() {
+  try {
+    const r = await window.native.fetchSites();
+    if (r?.ok) {
+      if (applySiteList(r.sites)) return;
+    }
+    applySiteList(r?.sites || cfg.siteList);
+  } catch {
+    try { applySiteList(cfg.siteList); } catch {}
+  }
+}
+loadSitesFromRemote();
 const appInfo = window.native.getAppInfo() || { version: '' };
+document.getElementById('about-version-value')?.append(`v${appInfo.version || ''}`);
 
 function store(k, v) {
   if (v === undefined) return cfg[k];
@@ -196,18 +379,12 @@ function visualCss() {
   const density = v.density / 100;
   const alpha = v.opacity / 100;
   const glow = v.accentGlow / 100;
-  const smooth = v.animations !== 'off';
   const transition = v.animations === 'cinematic' ? '620ms cubic-bezier(.16,1,.3,1)' : v.animations === 'smooth' ? '360ms cubic-bezier(.22,1,.36,1)' : '0ms';
-  const anim = v.animations === 'cinematic' ? 'animeonCinematic .52s cubic-bezier(.16,1,.3,1)' : v.animations === 'smooth' ? 'animeonSmooth .28s cubic-bezier(.22,1,.36,1)' : 'none';
-  const surfaces = 'header,nav,.header,.navbar,.menu,.sidebar,.modal,.dialog,.dropdown,.panel,.card,.anime-card,.tile,.poster,.chip,.badge';
-  const cards = '.card,.anime-card,.tile,.poster';
-  const motion = smooth ? `${surfaces},button,a,input,select,textarea,[role=button]{transition:transform var(--animeon-transition),opacity var(--animeon-transition),box-shadow var(--animeon-transition),background-color var(--animeon-transition),border-color var(--animeon-transition),color var(--animeon-transition)!important}button:hover,a:hover,[role=button]:hover,.card:hover,.anime-card:hover,.tile:hover{transform:translateY(-1px)}` : '';
-  const radius = `${surfaces},button,input,select,textarea,[role=button]{border-radius:var(--animeon-radius)!important}`;
-  const panel = `${surfaces}{background-color:rgba(24,20,31,var(--animeon-alpha));backdrop-filter:blur(var(--animeon-blur)) saturate(115%);-webkit-backdrop-filter:blur(var(--animeon-blur))}`;
-  const densityRules = `.anime-grid,.cards-grid,.cards,.grid{gap:calc(16px * var(--animeon-density))!important}.card,.anime-card,.tile{padding:calc(12px * var(--animeon-density))!important}`;
-  const glowRules = glow > 0 ? `button[class*="primary"],a[class*="primary"],.btn-primary,.button-primary,.accent-button,[data-primary=true]{box-shadow:0 8px calc(26px * var(--animeon-glow)) rgba(var(--animeon-accent-rgb),calc(.20 * var(--animeon-glow)))!important}.card:hover,.anime-card:hover,.tile:hover{box-shadow:0 14px calc(34px * var(--animeon-glow)) rgba(var(--animeon-accent-rgb),calc(.12 * var(--animeon-glow)))!important}` : '';
-  const safeScale = scale === 1 ? '' : `body{zoom:${scale}}`;
-  return `:root{--animeon-radius:${v.radius}px;--animeon-alpha:${alpha};--animeon-blur:${v.blur}px;--animeon-density:${density};--animeon-transition:${transition};--animeon-glow:${glow}}html{scroll-behavior:${cfg.smoothSite !== false ? 'smooth' : 'auto'}!important;scroll-padding-top:16px}${safeScale}${motion}${radius}${panel}${densityRules}${glowRules}*{scrollbar-width:thin}@keyframes animeonSmooth{from{opacity:.96;transform:translateY(4px)}to{opacity:1;transform:none}}@keyframes animeonCinematic{from{opacity:.97;transform:translateY(3px)}to{opacity:1;transform:none}}html.animeon-route-pulse main,html.animeon-route-pulse [role=main],html.animeon-route-pulse #app,html.animeon-route-pulse #root{animation:${anim}}`;
+  return `:root{--animeon-radius:${v.radius}px;--animeon-alpha:${alpha};--animeon-blur:${v.blur}px;--animeon-density:${density};--animeon-transition:${transition};--animeon-glow:${glow};--animeon-scale:${scale}}html{scroll-behavior:${cfg.smoothSite !== false ? 'smooth' : 'auto'}!important;scroll-padding-top:16px}${hideScrollbarCss()}`;
+}
+
+function hideScrollbarCss() {
+  return '*{scrollbar-width:none!important}*::-webkit-scrollbar{width:0!important;height:0!important;display:none!important}';
 }
 
 function syncVisualUI() {
@@ -256,7 +433,7 @@ btnProfileSave?.addEventListener('click',()=>{
   if(!name){toast('Введите название профиля','error');return}
   const key=currentSite==='co'?'co':'cc';
   if(!cfg.profiles||typeof cfg.profiles!=='object')cfg.profiles={};
-  cfg.profiles[name]={theme:activeTheme,visual:getVisual(),smoothSite:cfg.smoothSite!==false,css:cfg.customCss?.[key]||''};
+  cfg.profiles[name]={theme:activeTheme,visual:getVisual(),smoothSite:cfg.smoothSite!==false,css:cfg.customCss?.[key]||'',resumeEnabled:cfg.resumeEnabled!==false,autoNext:!!cfg.autoNext,notify:!!cfg.notify,doNotDisturb:!!cfg.doNotDisturb,performance:cfg.performance||'balanced',lowPower:!!cfg.lowPower,memorySaver:!!cfg.memorySaver,autoCacheCleanup:cfg.autoCacheCleanup!==false,cacheLimitMB:Number(cfg.cacheLimitMB)||512,playbackSpeed:Number(cfg.playbackSpeed)||1,hotkeys:{...(cfg.hotkeys||{})}};
   store('profiles',cfg.profiles);
   refreshProfiles();
   styleProfileSelect.value=name;
@@ -266,11 +443,11 @@ btnProfileLoad?.addEventListener('click',()=>{
   const name=styleProfileSelect?.value; const profile=cfg.profiles?.[name];
   if(!profile){toast('Выберите профиль','error');return}
   applyTheme(profile.theme||'violet',{skipSave:false});
-  cfg.visual=profile.visual||getVisual();cfg.smoothSite=profile.smoothSite!==false;
+  cfg.visual=profile.visual||getVisual();cfg.smoothSite=profile.smoothSite!==false;cfg.resumeEnabled=profile.resumeEnabled!==false;cfg.autoNext=!!profile.autoNext;cfg.notify=!!profile.notify;cfg.doNotDisturb=!!profile.doNotDisturb;cfg.performance=profile.performance||'balanced';cfg.lowPower=!!profile.lowPower;cfg.memorySaver=!!profile.memorySaver;cfg.autoCacheCleanup=profile.autoCacheCleanup!==false;cfg.cacheLimitMB=Number(profile.cacheLimitMB)||512;cfg.playbackSpeed=Number(profile.playbackSpeed)||1;cfg.hotkeys={...(profile.hotkeys||cfg.hotkeys||{})};
   const key=currentSite==='co'?'co':'cc';
   if(!cfg.customCss)cfg.customCss={cc:'',co:''};cfg.customCss[key]=profile.css||'';
   store('visual',cfg.visual);store('smoothSite',cfg.smoothSite);store('customCss',cfg.customCss);
-  syncVisualUI();loadSiteEditor();applyGuestStyles();toast('Профиль загружен');
+  syncVisualUI();loadSiteEditor();applyGuestStyles(); if(resumeToggle)resumeToggle.checked=cfg.resumeEnabled!==false;if(autoNextToggle)autoNextToggle.checked=!!cfg.autoNext;if(dndToggle)dndToggle.checked=!!cfg.doNotDisturb;if(notifyAdvancedToggle)notifyAdvancedToggle.checked=!!cfg.notify;if(memorySaverToggle)memorySaverToggle.checked=!!cfg.memorySaver;if(cacheAutoToggle)cacheAutoToggle.checked=cfg.autoCacheCleanup!==false;if(cacheLimit)cacheLimit.value=String(cfg.cacheLimitMB||512);toast('Профиль загружен');
 });
 btnProfileDelete?.addEventListener('click',()=>{
   const name=styleProfileSelect?.value;if(!name||!cfg.profiles?.[name]){toast('Выберите профиль','error');return}
@@ -279,7 +456,7 @@ btnProfileDelete?.addEventListener('click',()=>{
 
 async function applyGuestStyles() {
   if (!currentSite || !wv) return;
-  const key = currentSite === 'co' ? 'co' : 'cc';
+  const key = currentSite || 'cc';
   const custom = cfg.customCss && typeof cfg.customCss === 'object' ? String(cfg.customCss[key] || '') : '';
   const smooth = cfg.smoothSite !== false;
   const css = `${visualCss()}\n${custom}\n${smooth ? 'html{scroll-behavior:smooth!important;}' : ''}`;
@@ -308,9 +485,9 @@ const pickerHueCursor = document.getElementById('picker-hue-cursor');
 const pickerPreviewName = document.getElementById('custom-picker-preview-name');
 const customColorValue = document.getElementById('custom-color-value');
 const customColorCopy = document.getElementById('custom-color-copy');
-const THEME_NAMES = {violet:'Фиолетовый',blue:'Синий',cyan:'Бирюзовый',sky:'Небесный',indigo:'Индиго',emerald:'Изумрудный',green:'Зелёный',lime:'Лаймовый',yellow:'Жёлтый',amber:'Янтарный',orange:'Оранжевый',red:'Красный',rose:'Розовый',pink:'Розовый',fuchsia:'Фуксия',slate:'Серо-синий',gray:'Серый',teal:'Тёмная бирюза',mint:'Мята',gold:'Золото',coral:'Коралл',lavender:'Лаванда',crimson:'Алый',electric:'Электрик'};
+const THEME_NAMES = {violet:'Фиолетовый',blue:'Синий',cyan:'Бирюзовый',sky:'Небесный',indigo:'Индиго',emerald:'Изумрудный',green:'Зелёный',lime:'Лаймовый',yellow:'Жёлтый',amber:'Янтарный',orange:'Оранжевый',red:'Красный',rose:'Розовый',pink:'Розовый',fuchsia:'Фуксия',slate:'Серо-синий',gray:'Серый',teal:'Тёмная бирюза',mint:'Мята',gold:'Золото',coral:'Коралл',lavender:'Лаванда',crimson:'Алый',electric:'Электрик',light:'Светлая'};
 
-const PRESET_THEMES = new Set(['violet','blue','cyan','sky','indigo','emerald','green','lime','yellow','amber','orange','red','rose','pink','fuchsia','slate','gray','teal','mint','gold','coral','lavender','crimson','electric']);
+const PRESET_THEMES = new Set(['violet','blue','cyan','sky','indigo','emerald','green','lime','yellow','amber','orange','red','rose','pink','fuchsia','slate','gray','teal','mint','gold','coral','lavender','crimson','electric','light']);
 let activeTheme = PRESET_THEMES.has(cfg.theme) || cfg.theme === 'custom' ? cfg.theme : 'violet';
 if (!cfg.custom) cfg.custom = '#8b5cf6';
 
@@ -494,15 +671,19 @@ function openSite(id) {
   const s = SITES[id];
   if (!s) return;
   activateSite(id, { save: false });
-  if (!wv.getAttribute('src')) wv.setAttribute('src', s.url);
-  else wv.loadURL(s.url);
+  if (!pageTabs.length) pageTabs = [{ url: s.url, title: s.label }];
+  else pageTabs[activeTab] = { url: s.url, title: s.label };
+  if (!tabWebviews[activeTab]) createTabWebview(activeTab);
+  showTabWebview(activeTab);
+  loadTabUrl(tabWebviews[activeTab], s.url);
+  saveTabs();
 }
 
 function loadSiteEditor() {
   if (!siteCssInput || !smoothSiteToggle) return;
   syncVisualUI();
   refreshProfiles();
-  const key = currentSite === 'co' ? 'co' : 'cc';
+  const key = currentSite || 'cc';
   const css = cfg.customCss && typeof cfg.customCss === 'object' ? String(cfg.customCss[key] || '') : '';
   siteCssInput.value = css;
   smoothSiteToggle.checked = cfg.smoothSite !== false;
@@ -516,7 +697,7 @@ smoothSiteToggle?.addEventListener('change', async () => {
 
 btnSiteCssApply?.addEventListener('click', async () => {
   if (!currentSite) return;
-  const key = currentSite === 'co' ? 'co' : 'cc';
+  const key = currentSite || 'cc';
   if (!cfg.customCss || typeof cfg.customCss !== 'object') cfg.customCss = { cc: '', co: '' };
   cfg.customCss[key] = siteCssInput?.value || '';
   store('customCss', cfg.customCss);
@@ -526,7 +707,7 @@ btnSiteCssApply?.addEventListener('click', async () => {
 
 btnSiteCssReset?.addEventListener('click', async () => {
   if (!currentSite) return;
-  const key = currentSite === 'co' ? 'co' : 'cc';
+  const key = currentSite || 'cc';
   if (!cfg.customCss || typeof cfg.customCss !== 'object') cfg.customCss = { cc: '', co: '' };
   cfg.customCss[key] = '';
   if (siteCssInput) siteCssInput.value = '';
@@ -535,8 +716,14 @@ btnSiteCssReset?.addEventListener('click', async () => {
   toast('Свой CSS сброшен');
 });
 
+function getOtherSiteId() {
+  const keys = Object.keys(SITES);
+  if (keys.length < 2) return keys[0] || 'cc';
+  return keys.find(k => k !== currentSite) || keys[0];
+}
+
 function switchMirror() {
-  const otherId = currentSite === 'co' ? 'cc' : 'co';
+  const otherId = getOtherSiteId();
   document.body.classList.add('mirror-switching');
   setTimeout(() => { store('site', otherId); openSite(otherId); }, 180);
   setTimeout(() => document.body.classList.remove('mirror-switching'), 520);
@@ -544,7 +731,8 @@ function switchMirror() {
 
 function updateMirrorBtn() {
   if (!currentSite) return;
-  btnSite.title = `Сейчас ${SITES[currentSite].label} — переключить на ${SITES[currentSite === 'co' ? 'cc' : 'co'].label}`;
+  const otherId = getOtherSiteId();
+  btnSite.title = `Сейчас ${SITES[currentSite].label} — переключить на ${SITES[otherId].label}`;
 }
 
 btnSite.addEventListener('click', switchMirror);
@@ -557,14 +745,31 @@ document.querySelectorAll('[data-site]').forEach((card) => {
     if (picker && picker.isConnected) btnContinue.classList.add('show');
   });
 });
+document.querySelectorAll('.st-section [data-site]').forEach((card) => {
+  card.addEventListener('click', () => {
+    const id = card.dataset.site;
+    if (!SITES[id]) return;
+    if (card.closest('.settings-group-card')) {
+      store('site', id);
+      openSite(id);
+    }
+  });
+});
+document.querySelectorAll('.about-detail-link[data-url]').forEach((el) => {
+  el.addEventListener('click', () => window.native.openExternal(el.dataset.url));
+});
 
 btnContinue.addEventListener('click', () => {
   if (!currentSite) return;
-  if (rememberPick.checked) store('remember', '1');
+
+  store('remember', rememberPick.checked ? '1' : '0');
+  if (rememberPick.checked) store('site', currentSite);
+  else store('site', null);
+
   picker.classList.add('hide');
   setTimeout(() => {
     document.body.classList.remove('picker-visible');
-    picker.remove();
+    picker.classList.remove('show');
     if (pendingPosterUrls) {
       const urls = pendingPosterUrls;
       pendingPosterUrls = null;
@@ -947,6 +1152,23 @@ function closeHotkeys() {
 btnHotkeys?.addEventListener('click', openHotkeys);
 btnHotkeysMain?.addEventListener('click', openHotkeys);
 btnCloseHotkeys?.addEventListener('click', closeHotkeys);
+btnHotkeysReset?.addEventListener('click', async () => {
+  if (!confirm('Сбросить все горячие клавиши к значениям по умолчанию?')) return;
+  const previous = { ...hotkeyDraft };
+  hotkeyDraft = { ...DEFAULT_HOTKEYS };
+  const result = await window.native.setHotkeys(hotkeyDraft);
+  if (result?.failed?.length) {
+    hotkeyDraft = previous;
+    await window.native.setHotkeys(previous);
+    toast('Не удалось сбросить горячие клавиши', 'error');
+    renderHotkeys();
+    return;
+  }
+  cfg.hotkeys = { ...hotkeyDraft };
+  stopHotkeyRecording();
+  renderHotkeys();
+  toast('Горячие клавиши сброшены');
+});
 hotkeysModal?.addEventListener('click', (e) => {
   if (e.target === hotkeysModal) closeHotkeys();
 });
@@ -1068,9 +1290,553 @@ window.native.onScreenshotsChanged?.(() => {
   if (screenshotsModal?.classList.contains('show')) renderScreenshots();
 });
 
+
+function initSettingsNavigation() {
+  const nav=document.getElementById('settings-nav');
+  if(!nav) return;
+  const viewport=nav.querySelector('.settings-nav-viewport');
+  const prev=nav.querySelector('[data-settings-scroll=prev]');
+  const next=nav.querySelector('[data-settings-scroll=next]');
+  const items=()=>Array.from(nav.querySelectorAll('.settings-nav-item'));
+  const scrollByPage=(dir)=>{ if(!viewport) return; viewport.scrollBy({left:dir*Math.max(220,viewport.clientWidth*.72),behavior:'smooth'}); };
+  prev?.addEventListener('click',()=>scrollByPage(-1));
+  next?.addEventListener('click',()=>scrollByPage(1));
+  const updateArrows=()=>{
+    if(!viewport) return;
+    prev?.toggleAttribute('disabled',viewport.scrollLeft<=2);
+    next?.toggleAttribute('disabled',viewport.scrollLeft+viewport.clientWidth>=viewport.scrollWidth-2);
+  };
+  viewport?.addEventListener('scroll',updateArrows,{passive:true});
+  viewport?.addEventListener('wheel', (e)=>{
+    if(Math.abs(e.deltaY) > Math.abs(e.deltaX)){
+      e.preventDefault();
+      viewport.scrollLeft += e.deltaY;
+    }
+  }, {passive:false});
+  window.addEventListener('resize',updateArrows);
+  items().forEach(btn=>btn.addEventListener('click',()=>{
+    const filter=btn.dataset.settingsFilter || 'all';
+    items().forEach(x=>x.classList.toggle('active',x===btn));
+    document.querySelectorAll('.settings-group-card').forEach(section=>section.classList.toggle('is-hidden',filter!=='all' && section.dataset.settingsGroup!==filter));
+    if(viewport){ const left=btn.offsetLeft, right=left+btn.offsetWidth, viewLeft=viewport.scrollLeft, viewRight=viewLeft+viewport.clientWidth; if(left<viewLeft) viewport.scrollTo({left:Math.max(0,left-10),behavior:'smooth'}); else if(right>viewRight) viewport.scrollTo({left:Math.max(0,right-viewport.clientWidth+10),behavior:'smooth'}); }
+    requestAnimationFrame(updateArrows);
+  }));
+  updateArrows();
+}
+initSettingsNavigation();
+const settingsSearch=document.getElementById('settings-search');
+if(settingsSearch){
+  settingsSearch.addEventListener('input',()=>{
+    const q=settingsSearch.value.trim().toLowerCase();
+    document.querySelectorAll('.settings-group-card').forEach(card=>{
+      if(!q){card.classList.remove('search-hidden');return;}
+      const text=card.textContent.toLowerCase();
+      card.classList.toggle('search-hidden',!text.includes(q));
+    });
+  });
+}
+if (resumeToggle) { resumeToggle.checked = cfg.resumeEnabled !== false; resumeToggle.addEventListener('change',()=>store('resumeEnabled',resumeToggle.checked)); }
+const saveTabsToggle=document.getElementById('save-tabs-toggle');
+const restoreLastToggle=document.getElementById('restore-last-toggle');
+if(saveTabsToggle){ saveTabsToggle.checked=cfg.saveTabs!==false; saveTabsToggle.addEventListener('change',()=>store('saveTabs',saveTabsToggle.checked)); }
+if(restoreLastToggle){ restoreLastToggle.checked=cfg.restoreLastTab!==false; restoreLastToggle.addEventListener('change',()=>store('restoreLastTab',restoreLastToggle.checked)); }
+document.getElementById('btn-clear-tabs')?.addEventListener('click',async()=>{
+  if(!confirm('Очистить все вкладки? Останется только стартовая.')) return;
+  pageTabs=[{url:SITES[store('site')||'co']?.url||SITES.co.url, title:SITES[store('site')||'co']?.label||'AnimeOn'}];
+  activeTab=0;
+  if(tabWebviews[0] && tabWebviews[0]!==firstWebview) try{tabWebviews[0].remove()}catch{}
+  tabWebviews.length=1;
+  tabWebviews[0]=firstWebview;
+  showTabWebview(0);
+  loadTabUrl(firstWebview, pageTabs[0].url);
+  await saveTabs();
+  toast('Вкладки очищены');
+});
+if (autoNextToggle) { autoNextToggle.checked = !!cfg.autoNext; autoNextToggle.addEventListener('change',()=>store('autoNext',autoNextToggle.checked)); }
+if (dndToggle) { dndToggle.checked = !!cfg.doNotDisturb; dndToggle.addEventListener('change',()=>{store('doNotDisturb',dndToggle.checked);updateDndButton();}); }
+if (notifyAdvancedToggle) { notifyAdvancedToggle.checked = !!cfg.notify; notifyAdvancedToggle.addEventListener('change',()=>store('notify',notifyAdvancedToggle.checked)); }
+if (memorySaverToggle) { memorySaverToggle.checked = !!cfg.memorySaver; memorySaverToggle.addEventListener('change',()=>window.native.setMemorySaver(memorySaverToggle.checked)); }
+if (cacheAutoToggle) { cacheAutoToggle.checked = cfg.autoCacheCleanup !== false; cacheAutoToggle.addEventListener('change',()=>window.native.cacheSettings({auto:cacheAutoToggle.checked,limitMB:Number(cacheLimit?.value)||512})); }
+if (cacheLimit) { cacheLimit.value = String(Number(cfg.cacheLimitMB)||512); cacheLimit.addEventListener('change',()=>{let v=Number(cacheLimit.value)||512;v=Math.max(64,Math.min(16384,v));cacheLimit.value=String(v);window.native.cacheSettings({auto:cacheAutoToggle?.checked!==false,limitMB:v});}); }
+async function refreshCacheInfo(){ try { const r=await window.native.cacheInfo(); if(r?.ok && cacheInfoText){ const mb=(Number(r.apiCacheMB)||0)+(Number(r.sessionCacheMB)||0); cacheInfoText.textContent=`Сейчас: ${mb.toFixed(1)} MB`; } } catch {} }
+document.getElementById('btn-cache-refresh')?.addEventListener('click',refreshCacheInfo);
+document.getElementById('btn-cache-clean')?.addEventListener('click',async()=>{const r=await window.native.clearCache();toast(r?.ok?'Кэш очищен':'Не удалось очистить кэш',r?.ok?'ok':'error');refreshCacheInfo();});
+document.getElementById('btn-network-check')?.addEventListener('click',()=>btnConnectionCheck?.click());
+document.getElementById('btn-network-open-log')?.addEventListener('click',async()=>{const r=await window.native.openLogs();if(!r?.ok)toast('Не удалось открыть журнал','error');});
+document.getElementById('btn-open-log')?.addEventListener('click',async()=>{const r=await window.native.openLogs();if(!r?.ok)toast('Не удалось открыть журнал','error');});
+document.getElementById('btn-copy-log')?.addEventListener('click',async()=>{const r=await window.native.copyLogs();toast(r?.ok?'Журнал скопирован':'Не удалось скопировать журнал',r?.ok?'ok':'error');});
+document.getElementById('btn-clear-log')?.addEventListener('click',async()=>{if(confirm('Очистить журнал ошибок?')){const r=await window.native.clearLogs();toast(r?.ok?'Журнал очищен':'Не удалось очистить журнал',r?.ok?'ok':'error');}});
+document.getElementById('btn-screenshots-open-settings')?.addEventListener('click',openScreenshots);
+document.getElementById('btn-screenshots-folder-settings')?.addEventListener('click',()=>window.native.openScreenshotsFolder());
+document.getElementById('btn-about-check-update')?.addEventListener('click',async()=>{const r=await window.native.checkUpdate();toast(r?.available?'Доступно обновление':'Обновлений нет',r?.available?'ok':'ok');});
+document.getElementById('btn-about-source')?.addEventListener('click',()=>window.native.openExternal('https://github.com/Neukluziy/animeon-desktop'));
+document.getElementById('btn-reset-positions')?.addEventListener('click',()=>{store('playbackPositions',{});toast('Позиции просмотра очищены');});
+document.getElementById('btn-sleep-timer')?.addEventListener('click',async()=>{const raw=prompt('Через сколько минут остановить видео? Введите 0 для отключения.',String(cfg.sleepTimer?.minutes||0));if(raw===null)return;const m=Math.max(0,Number(raw)||0);const action=m?(prompt('Действие: pause — остановить видео, tray — убрать в трей, exit — закрыть приложение.',cfg.sleepTimer?.action||'pause')||'pause'):'pause';const r=await window.native.setSleepTimer(m,action);toast(r?.enabled?`Таймер установлен на ${m} мин.`:'Таймер сна отключён');});
+
+function openFind(){ if(!findBar)return; findBar.hidden=false; findBar.style.display='flex'; findBar.setAttribute('aria-hidden','false'); requestAnimationFrame(()=>{findInput?.focus(); findInput?.select();}); }
+function closeFind(){ if(findBar){findBar.hidden=true;findBar.style.display='none';findBar.setAttribute('aria-hidden','true');findCount.textContent='';} window.native.stopFindInPage?.(); }
+async function doFind(next=false){const q=findInput?.value||'';if(!q)return;try{const r=await window.native.findInPage(q);if(r?.id) findCount.textContent='';}catch{}}
+findInput?.addEventListener('input',()=>doFind(false));
+findInput?.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();doFind(true)}if(e.key==='Escape')closeFind();});
+findPrev?.addEventListener('click',()=>doFind(true)); findNext?.addEventListener('click',()=>doFind(true)); findClose?.addEventListener('click',closeFind);
+window.native.onFindOpen?.(openFind);
+
+closeFind();
+setTimeout(closeFind, 0);
+let pageTabs=[]; let activeTab=0;
+function tabTitle(item){return String(item?.title||item?.url||'Новая страница').replace(/^AnimeOn\s*[—-]\s*/i,'').slice(0,48);}
+function renderTabs(){
+  if(!tabsBar)return;
+  tabsBar.innerHTML='';
+  pageTabs.forEach((tab,i)=>{
+    const b=document.createElement('button');
+    b.className='tab-item'+(i===activeTab?' active':'');
+    b.title=tabTitle(tab);
+    const span=document.createElement('span');
+    span.textContent=tabTitle(tab);
+    const close=document.createElement('span');
+    close.className='tab-close';
+    close.setAttribute('role','button');
+    close.setAttribute('aria-label','Закрыть вкладку');
+    close.textContent='×';
+    close.addEventListener('click',e=>{
+      e.stopPropagation();
+      closeTab(i);
+    });
+    b.append(span,close);
+    b.addEventListener('click',(e)=>{
+      if(e.target.closest('.tab-close')) return;
+      if(i===activeTab){
+        try{ activeWebview.focus(); }catch{}
+        try{ wv.reload(); }catch{}
+        return;
+      }
+      switchTab(i);
+    });
+    b.style.pointerEvents='auto';
+    b.style.cursor='pointer';
+    tabsBar.appendChild(b);
+  });
+}
+async function saveTabs(){await window.native.tabsSet(pageTabs,activeTab);renderTabs();}
+function updateSiteFromUrl(url){
+  const value=String(url||'').toLowerCase();
+  for(const [id,site] of Object.entries(SITES)){
+    const host = new URL(site.url).hostname.toLowerCase();
+    if(value.includes(host)){ currentSite=id; break; }
+  }
+  if(currentSite) updateMirrorBtn();
+}
+function isAnimeOnUrl(url){
+  try{
+    const u=new URL(String(url||''));
+    return (u.protocol==='http:'||u.protocol==='https:') && /(^|\.)animeon\.(cc|co)$/i.test(u.hostname);
+  }catch{return false;}
+}
+function samePageUrl(a,b){
+  try{
+    const ua=new URL(String(a||''));
+    const ub=new URL(String(b||''));
+    ua.hash=''; ub.hash='';
+    if(ua.pathname.length>1) ua.pathname=ua.pathname.replace(/\/$/,'');
+    if(ub.pathname.length>1) ub.pathname=ub.pathname.replace(/\/$/,'');
+    return ua.protocol===ub.protocol && ua.hostname.toLowerCase()===ub.hostname.toLowerCase() && ua.port===ub.port && ua.pathname===ub.pathname && ua.search===ub.search;
+  }catch{return String(a||'')===String(b||'');}
+}
+function normalizeTabUrl(url){
+  try{
+    const u=new URL(String(url||''));
+    u.hash='';
+    if(u.pathname.length>1) u.pathname=u.pathname.replace(/\/$/,'');
+    return u.href;
+  }catch{return String(url||'');}
+}
+
+async function syncFavoriteButton(){try{const url=activeWebview?.getURL?.()||'';if(!url)return;const r=await window.native.pageFavorites();const found=(r?.items||[]).some(x=>samePageUrl(typeof x==='string'?x:x?.url, url));const icon=btnPageFavorite?.querySelector('.page-action-icon');if(icon) icon.innerHTML=found?'★':'<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M6 4.5A2.5 2.5 0 0 1 8.5 2h7A2.5 2.5 0 0 1 18 4.5V21l-6-3.5L6 21V4.5Z\"/></svg>';}catch{}}
+function syncActiveTabFromWebview(){
+  if(!pageTabs.length || !activeWebview) return;
+  let url='';
+  try { url=activeWebview.getURL() || ''; } catch {}
+  if(!isAnimeOnUrl(url)) return;
+  updateSiteFromUrl(url);
+  let title='';
+  try { title=activeWebview.getTitle() || ''; } catch {}
+  pageTabs[activeTab]={url,title:title||tabTitle({url})};
+}
+async function switchTab(index){
+  if(index<0 || index>=pageTabs.length || index===activeTab) return;
+  syncActiveTabFromWebview();
+  activeTab=index;
+  if(!tabWebviews[index]){
+    createTabWebview(index);
+    const tab=pageTabs[index];
+    if(tab?.url) loadTabUrl(tabWebviews[index], tab.url);
+  }
+  showTabWebview(index);
+  const tab=pageTabs[index];
+  updateSiteFromUrl(tab?.url);
+  renderTabs();
+  await saveTabs();
+  syncFavoriteButton();
+  setTimeout(()=>{try{activeWebview.focus();updateNav();applyGuestStyles();}catch{}},80);
+}
+async function loadTabUrl(webview, url){
+  if(!webview || !url) return;
+  const target=String(url);
+  const load=()=>{
+    if(!webview.isConnected) return false;
+    try{
+      const current=webview.getURL?.()||'';
+      if(current && current===target) return true;
+    }catch{}
+    try{
+      webview.setAttribute('src', target);
+      return true;
+    }catch{}
+    try{webview.src=target;return true}catch{}
+    try{webview.loadURL(target);return true}catch{}
+    return false;
+  };
+  const attempt=()=>{if(!load())setTimeout(attempt,180)};
+  if(!webview.isConnected){requestAnimationFrame(()=>setTimeout(attempt,80));return;}
+  requestAnimationFrame(()=>setTimeout(attempt,80));
+}
+async function loadActiveTab(){
+  if(!pageTabs.length) pageTabs=[{url:SITES.co.url,title:SITES.co.label}];
+  if(!tabWebviews[activeTab]) createTabWebview(activeTab);
+  showTabWebview(activeTab);
+  const tab=pageTabs[activeTab];
+  loadTabUrl(tabWebviews[activeTab], tab?.url);
+  renderTabs();
+}
+async function syncTabs(url,title){
+  if(!isAnimeOnUrl(url))return;
+  if(!pageTabs.length) pageTabs=[{url,title}];
+  else pageTabs[activeTab]={url,title:title||tabTitle({url})};
+  await saveTabs();
+}
+function updateDndButton(){
+  if(!btnDnd)return;
+  const enabled=!!cfg.doNotDisturb;
+  btnDnd.classList.toggle('active',enabled);
+  btnDnd.setAttribute('aria-pressed',enabled?'true':'false');
+  btnDnd.title=enabled?'Не беспокоить: включено':'Не беспокоить: выключено';
+  btnDnd.innerHTML=enabled
+    ? '<span class="dnd-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/><path d="M4 4l16 16"/></svg></span>'
+    : '<span class="dnd-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></svg></span>';
+}
+btnDnd?.addEventListener('click',async()=>{
+  const enabled=!cfg.doNotDisturb;
+  try{
+    const r=await window.native.setDnd(enabled);
+    if(!r?.ok)throw new Error('dnd');
+    cfg.doNotDisturb=enabled;
+    updateDndButton();
+    toast(enabled?'Не беспокоить включён':'Не беспокоить выключен');
+  }catch{toast('Не удалось изменить режим «Не беспокоить»','error');}
+});
+updateDndButton();
+
+let recentPagesCache=[]; let favoritePagesCache=[];
+const pagesSearch=document.getElementById('pages-search');
+const favoritesSearch=document.getElementById('favorites-search');
+function filterPages(items, query){
+  if(!query) return items;
+  const q=String(query).toLowerCase();
+  return items.filter(it=>{
+    const d=typeof it==='string'?{url:it,title:it}:it;
+    return String(d.title||'').toLowerCase().includes(q) || String(d.url||'').toLowerCase().includes(q);
+  });
+}
+async function openPages(){
+  pagesModal?.classList.add('show');
+  if(pagesSearch){ pagesSearch.value=''; }
+  try {
+    const r=await window.native.recentPages();
+    recentPagesCache=r?.items||[];
+    renderPageList(recentPagesList,recentPagesCache);
+  } catch { recentPagesCache=[]; renderPageList(recentPagesList,[]); }
+}
+async function openFavorites(){
+  favoritesModal?.classList.add('show');
+  if(favoritesSearch){ favoritesSearch.value=''; }
+  try {
+    const f=await window.native.pageFavorites();
+    favoritePagesCache=f?.items||[];
+    renderPageList(favoritePagesList,favoritePagesCache);
+    const url=activeWebview?.getURL?.()||'';
+    const found=(favoritePagesCache||[]).some(x=>samePageUrl(typeof x==='string'?x:x?.url,url));
+    const icon=btnPageFavorite?.querySelector('.page-action-icon');
+    if(icon) icon.innerHTML=found?'★':'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4.5A2.5 2.5 0 0 1 8.5 2h7A2.5 2.5 0 0 1 18 4.5V21l-6-3.5L6 21V4.5Z"/></svg>';
+  } catch { favoritePagesCache=[]; renderPageList(favoritePagesList,[]); }
+}
+function renderPageList(root,items){
+  if(!root) return;
+  root.innerHTML='';
+  const list=Array.isArray(items)?items:[];
+  if(!list.length){ root.innerHTML='<div class="st-hint pages-empty">Пока пусто</div>'; return; }
+  const isRecent = root===recentPagesList;
+  const isFav = root===favoritePagesList;
+  const selectMode = isRecent ? pagesSelectMode : (isFav ? favSelectMode : false);
+  const selectedSet = isRecent ? pagesSelected : (isFav ? favSelected : new Set());
+  const toShow=list.slice(0,80);
+  toShow.forEach(item=>{
+    const data=typeof item==='string'?{url:item,title:item}:item;
+    const urlKey=String(data.url||'');
+    const b=document.createElement('div');
+    b.className='page-list-item'+(selectMode?' select-mode':'');
+    const check=document.createElement('input');
+    check.type='checkbox';
+    check.className='page-list-check';
+    check.checked=selectedSet.has(urlKey);
+    check.addEventListener('click', (e)=>{ e.stopPropagation(); if(check.checked) selectedSet.add(urlKey); else selectedSet.delete(urlKey); if(isRecent) updatePagesSelectUI(); else updateFavSelectUI(); });
+    b.appendChild(check);
+    const main=document.createElement('button');
+    main.className='page-list-main';
+    main.style.cssText='flex:1; background:transparent; border:0; text-align:left; cursor:pointer;';
+    const title=document.createElement('strong'); title.className='page-list-title'; title.textContent=tabTitle(data);
+    const urlEl=document.createElement('small'); urlEl.className='page-list-url'; urlEl.textContent=urlKey;
+    main.append(title,urlEl);
+    main.addEventListener('click',()=>{
+      if(selectMode){
+        if(selectedSet.has(urlKey)) selectedSet.delete(urlKey); else selectedSet.add(urlKey);
+        check.checked=selectedSet.has(urlKey);
+        if(isRecent) updatePagesSelectUI(); else updateFavSelectUI();
+        return;
+      }
+      if(!pageTabs.length) pageTabs=[{url:data.url,title:data.title||data.url}];
+      pageTabs[activeTab]={url:data.url,title:data.title||tabTitle(data)};
+      if(!tabWebviews[activeTab]) createTabWebview(activeTab);
+      showTabWebview(activeTab);
+      loadTabUrl(activeWebview,data.url);
+      renderTabs(); saveTabs(); syncFavoriteButton();
+      pagesModal?.classList.remove('show'); favoritesModal?.classList.remove('show');
+    });
+    b.appendChild(main);
+    const del=document.createElement('button');
+    del.className='page-list-delete';
+    del.title='Удалить';
+    del.textContent='×';
+    del.addEventListener('click', async (e)=>{
+      e.stopPropagation();
+      if(!confirm('Удалить "'+tabTitle(data)+'"?')) return;
+      const targetUrl=urlKey;
+      try{
+        if(isRecent){
+          try{ await window.native.recentPagesRemove?.(targetUrl); }catch{}
+          recentPagesCache=recentPagesCache.filter(it=>{ const u=typeof it==='string'?it:it.url; return u!==targetUrl && !samePageUrl(u,targetUrl); });
+          renderPageList(recentPagesList, filterPages(recentPagesCache, pagesSearch?.value||''));
+        } else {
+          try{ await window.native.togglePageFavorite({url:targetUrl}); }catch{}
+          try{ await window.native.pageFavoriteRemove?.(targetUrl); }catch{}
+          favoritePagesCache=favoritePagesCache.filter(it=>{ const u=typeof it==='string'?it:it.url; return u!==targetUrl && !samePageUrl(u,targetUrl); });
+          renderPageList(favoritePagesList, filterPages(favoritePagesCache, favoritesSearch?.value||''));
+          syncFavoriteButton();
+        }
+        toast('Удалено');
+      }catch{ toast('Не удалось удалить','error'); }
+    });
+    b.appendChild(del);
+    const arrow=document.createElement('span'); arrow.className='page-list-arrow'; arrow.textContent='›';
+    arrow.style.cursor='pointer';
+    arrow.addEventListener('click', (e)=>{
+      e.stopPropagation();
+      if(selectMode) return;
+      if(!pageTabs.length) pageTabs=[{url:data.url,title:data.title||data.url}];
+      pageTabs[activeTab]={url:data.url,title:data.title||tabTitle(data)};
+      if(!tabWebviews[activeTab]) createTabWebview(activeTab);
+      showTabWebview(activeTab);
+      loadTabUrl(activeWebview,data.url);
+      renderTabs(); saveTabs(); syncFavoriteButton();
+      pagesModal?.classList.remove('show'); favoritesModal?.classList.remove('show');
+    });
+    b.appendChild(arrow);
+    root.appendChild(b);
+  });
+}
+pagesSearch?.addEventListener('input',()=>{ renderPageList(recentPagesList, filterPages(recentPagesCache, pagesSearch.value)); });
+favoritesSearch?.addEventListener('input',()=>{ renderPageList(favoritePagesList, filterPages(favoritePagesCache, favoritesSearch.value)); });
+
+let pagesSelectMode=false, pagesSelected=new Set();
+let favSelectMode=false, favSelected=new Set();
+const pagesSelectToggle=document.getElementById('pages-select-toggle');
+const pagesDeleteBtn=document.getElementById('pages-delete-selected');
+const pagesCancelBtn=document.getElementById('pages-cancel-select');
+const pagesCountEl=document.getElementById('pages-selected-count');
+const favSelectToggle=document.getElementById('favorites-select-toggle');
+const favDeleteBtn=document.getElementById('favorites-delete-selected');
+const favCancelBtn=document.getElementById('favorites-cancel-select');
+const favCountEl=document.getElementById('favorites-selected-count');
+function updatePagesSelectUI(){
+  if(!pagesSelectToggle) return;
+  pagesSelectToggle.textContent=pagesSelectMode?'Готово':'Выбрать';
+  const hasSel=pagesSelectMode && pagesSelected.size>0;
+  pagesSelectToggle.classList.toggle('hidden-btn',pagesSelectMode && hasSel);
+  pagesSelectToggle.style.display=pagesSelectMode && hasSel?'none':'inline-flex';
+  if(pagesDeleteBtn){pagesDeleteBtn.classList.toggle('hidden-btn',!hasSel);pagesDeleteBtn.style.display=hasSel?'inline-flex':'none';}
+  if(pagesCancelBtn){pagesCancelBtn.classList.toggle('hidden-btn',!hasSel);pagesCancelBtn.style.display=hasSel?'inline-flex':'none';}
+  if(pagesCountEl) pagesCountEl.textContent=String(pagesSelected.size);
+  document.querySelectorAll('#recent-pages-list .page-list-item').forEach(el=>el.classList.toggle('select-mode', pagesSelectMode));
+  document.querySelectorAll('#recent-pages-list .page-list-check').forEach((cb,i)=>{
+    const item=filterPages(recentPagesCache, pagesSearch?.value||'')[i];
+    const key=item? (typeof item==='string'?item:item.url):'';
+    cb.checked=pagesSelected.has(key);
+  });
+}
+function updateFavSelectUI(){
+  if(!favSelectToggle) return;
+  favSelectToggle.textContent=favSelectMode?'Готово':'Выбрать';
+  const hasSel=favSelectMode && favSelected.size>0;
+  favSelectToggle.classList.toggle('hidden-btn',favSelectMode && hasSel);
+  favSelectToggle.style.display=favSelectMode && hasSel?'none':'inline-flex';
+  if(favDeleteBtn){favDeleteBtn.classList.toggle('hidden-btn',!hasSel);favDeleteBtn.style.display=hasSel?'inline-flex':'none';}
+  if(favCancelBtn){favCancelBtn.classList.toggle('hidden-btn',!hasSel);favCancelBtn.style.display=hasSel?'inline-flex':'none';}
+  if(favCountEl) favCountEl.textContent=String(favSelected.size);
+  document.querySelectorAll('#favorite-pages-list .page-list-item').forEach(el=>el.classList.toggle('select-mode', favSelectMode));
+  document.querySelectorAll('#favorite-pages-list .page-list-check').forEach((cb,i)=>{
+    const item=filterPages(favoritePagesCache, favoritesSearch?.value||'')[i];
+    const key=item? (typeof item==='string'?item:item.url):'';
+    cb.checked=favSelected.has(key);
+  });
+}
+pagesSelectToggle?.addEventListener('click',()=>{ pagesSelectMode=!pagesSelectMode; if(!pagesSelectMode) pagesSelected.clear(); updatePagesSelectUI(); renderPageList(recentPagesList, filterPages(recentPagesCache, pagesSearch?.value||'')); });
+pagesCancelBtn?.addEventListener('click',()=>{ pagesSelectMode=false; pagesSelected.clear(); updatePagesSelectUI(); renderPageList(recentPagesList, filterPages(recentPagesCache, pagesSearch?.value||'')); });
+favSelectToggle?.addEventListener('click',()=>{ favSelectMode=!favSelectMode; if(!favSelectMode) favSelected.clear(); updateFavSelectUI(); renderPageList(favoritePagesList, filterPages(favoritePagesCache, favoritesSearch?.value||'')); });
+favCancelBtn?.addEventListener('click',()=>{ favSelectMode=false; favSelected.clear(); updateFavSelectUI(); renderPageList(favoritePagesList, filterPages(favoritePagesCache, favoritesSearch?.value||'')); });
+pagesDeleteBtn?.addEventListener('click',async()=>{
+  if(!pagesSelected.size) return;
+  if(!confirm(`Удалить ${pagesSelected.size} страниц из истории?`)) return;
+  const toDelete=new Set(pagesSelected);
+  try{
+    for(const url of toDelete){
+      try{ await window.native.recentPagesRemove?.(url); }catch{}
+      recentPagesCache=recentPagesCache.filter(it=>{ const u=typeof it==='string'?it:it.url; return !toDelete.has(u) && !samePageUrl(u, [...toDelete][0]); });
+      recentPagesCache=recentPagesCache.filter(it=>{ const u=typeof it==='string'?it:it.url; for(const d of toDelete) if(d===u || samePageUrl(d,u)) return false; return true; });
+    }
+    pagesSelected.clear();
+    pagesSelectMode=false;
+    updatePagesSelectUI();
+    renderPageList(recentPagesList, filterPages(recentPagesCache, pagesSearch?.value||''));
+    toast('Удалено');
+  }catch(e){ toast('Не удалось удалить','error'); }
+});
+favDeleteBtn?.addEventListener('click',async()=>{
+  if(!favSelected.size) return;
+  if(!confirm(`Удалить ${favSelected.size} из избранного?`)) return;
+  const toDelete=new Set(favSelected);
+  try{
+    for(const url of toDelete){
+      try{ await window.native.togglePageFavorite({url}); }catch{}
+      try{ await window.native.pageFavoriteRemove?.(url); }catch{}
+    }
+    favoritePagesCache=favoritePagesCache.filter(it=>{ const u=typeof it==='string'?it:it.url; for(const d of toDelete) if(d===u || samePageUrl(d,u)) return false; return true; });
+    favSelected.clear();
+    favSelectMode=false;
+    updateFavSelectUI();
+    renderPageList(favoritePagesList, filterPages(favoritePagesCache, favoritesSearch?.value||''));
+    syncFavoriteButton();
+    toast('Удалено из избранного');
+  }catch(e){ toast('Не удалось удалить','error'); }
+});
+btnPages?.addEventListener('click',openPages);
+btnPageFavorites?.addEventListener('click',openFavorites);
+btnClosePages?.addEventListener('click',()=>pagesModal?.classList.remove('show'));
+btnCloseFavorites?.addEventListener('click',()=>favoritesModal?.classList.remove('show'));
+pagesModal?.addEventListener('click',e=>{if(e.target===pagesModal)pagesModal.classList.remove('show')});
+favoritesModal?.addEventListener('click',e=>{if(e.target===favoritesModal)favoritesModal.classList.remove('show')});
+btnPageFavorite?.addEventListener('click',async()=>{
+  let url='',title='';
+  try{url=activeWebview?.getURL?.()||'';}catch{}
+  if(!isAnimeOnUrl(url)) url=pageTabs[activeTab]?.url||'';
+  try{title=await activeWebview?.getTitle?.()||'';}catch{}
+  if(!isAnimeOnUrl(url)){toast('Открой страницу AnimeOn, чтобы добавить её в избранное','error');return;}
+  try{
+    const r=await window.native.togglePageFavorite({url,title});
+    if(!r?.ok){toast('Не удалось изменить избранное','error');return;}
+    syncFavoriteButton();
+    toast(r.favorite?'Добавлено в избранное':'Удалено из избранного');
+  }catch{toast('Не удалось изменить избранное','error');}
+});
+btnNewTab?.addEventListener('click',async()=>{
+  try{
+    syncActiveTabFromWebview();
+    const index=pageTabs.length;
+    const source=pageTabs[activeTab]?.url||'';
+    const inferred=/\banimeon\.cc\b/i.test(source)?'cc':(/\banimeon\.co\b/i.test(source)?'co':(currentSite||'co'));
+    const base=SITES[inferred]||SITES.co;
+    const webview=createTabWebview(index);
+    pageTabs.push({url:base.url,title:base.label});
+    activeTab=index;
+    showTabWebview(index);
+    renderTabs();
+    loadTabUrl(webview,base.url);
+    await saveTabs();
+  }catch(e){console.error('[AnimeOn] new tab error',e);toast('Не удалось создать вкладку','error');}
+});
+window.native.onTabsCycle?.(delta=>{if(!pageTabs.length)return;switchTab((activeTab+Number(delta||1)+pageTabs.length)%pageTabs.length);});
+async function closeTab(index){
+  if(pageTabs.length<=1){
+    const only=pageTabs[0]||{url:SITES.co.url,title:SITES.co.label};
+    pageTabs=[only];
+    activeTab=0;
+    if(!tabWebviews[0]) tabWebviews[0]=firstWebview;
+    showTabWebview(0);
+    renderTabs();
+    return;
+  }
+  const closingWebview=tabWebviews[index];
+  pageTabs.splice(index,1);
+  tabWebviews.splice(index,1);
+  if(closingWebview && closingWebview!==firstWebview) {
+    try{closingWebview.remove();}catch{}
+  }
+  if(activeTab>index) activeTab--;
+  else if(activeTab===index) activeTab=Math.min(activeTab,pageTabs.length-1);
+  showTabWebview(activeTab);
+  await saveTabs();
+  setTimeout(()=>{try{activeWebview.focus();updateNav();applyGuestStyles();}catch{}},50);
+}
+(async()=>{
+  try{
+    const selectedId=SITES[store('site')] ? store('site') : 'co';
+    currentSite=selectedId;
+    const selected=SITES[selectedId];
+    const savedTabs=Array.isArray(cfg.tabs)?cfg.tabs:null;
+    const saveOn=cfg.saveTabs!==false;
+    const restoreOn=cfg.restoreLastTab!==false;
+    if(saveOn && savedTabs && savedTabs.length){
+      pageTabs=savedTabs.map(t=>({url:String(t.url||selected.url), title:String(t.title||t.url||selected.label)}));
+      activeTab=restoreOn && Number.isInteger(cfg.activeTab) ? Math.max(0, Math.min(cfg.activeTab, pageTabs.length-1)) : 0;
+      try{ updateSiteFromUrl(pageTabs[activeTab]?.url||selected.url); }catch{}
+    } else {
+      pageTabs=[{url:selected.url,title:selected.label}];
+      activeTab=0;
+    }
+    if(!tabWebviews[0]) tabWebviews[0]=firstWebview;
+    pageTabs.forEach((tab,i)=>{ if(!tabWebviews[i]) createTabWebview(i); });
+    showTabWebview(activeTab);
+    renderTabs();
+    const activeUrl=pageTabs[activeTab]?.url||selected.url;
+    if(tabWebviews[activeTab]) loadTabUrl(tabWebviews[activeTab], activeUrl);
+    pageTabs.forEach((tab,i)=>{ if(i!==activeTab && tabWebviews[i]) loadTabUrl(tabWebviews[i], tab.url); });
+    await window.native.tabsSet(pageTabs,activeTab);
+    updateMirrorBtn();
+  }catch{
+    currentSite='co';
+    pageTabs=[{url:SITES.co.url,title:SITES.co.label}];
+    activeTab=0;
+    if(!tabWebviews[0]) tabWebviews[0]=firstWebview;
+    pageTabs.forEach((tab,i)=>{ if(!tabWebviews[i]) createTabWebview(i); });
+    showTabWebview(0);
+    renderTabs();
+    loadTabUrl(tabWebviews[0]||firstWebview,SITES.co.url);
+  }
+})();
+
 function closeSettings() {
   settingsOverlay.classList.remove('show');
   btnSettings.classList.remove('open');
+  if(settingsSearch){settingsSearch.value='';document.querySelectorAll('.settings-group-card').forEach(c=>c.classList.remove('search-hidden'));}
 }
 btnSettings.addEventListener('click', openSettings);
 btnCloseSettings.addEventListener('click', closeSettings);
@@ -1091,13 +1857,28 @@ function updateNav() {
 }
 
 function rememberPage(url) {
-  if (!/^https:\/\/(?:www\.)?animeon\.(?:cc|co)\//i.test(String(url))) return;
-  cfg.lastUrl = String(url);
+  if (!isAnimeOnUrl(url)) return;
+  const normalized = normalizeTabUrl(url);
+  cfg.lastUrl = String(normalized);
   const history = Array.isArray(cfg.history) ? cfg.history : [];
-  const next = [String(url), ...history.filter(x => x !== url)].slice(0, 80);
+  const next = [normalized, ...history.filter(x => normalizeTabUrl(x) !== normalized)].slice(0, 80);
   cfg.history = next;
+  if (pageTabs.length) {
+    let title='';
+    try { title = activeWebview.getTitle() || document.title || ''; } catch {}
+    const prevUrl = pageTabs[activeTab]?.url || '';
+    if (prevUrl !== normalized || (title && pageTabs[activeTab]?.title !== title)) {
+      pageTabs[activeTab] = { url:normalized, title:title || tabTitle({url:normalized}) };
+      try{ updateSiteFromUrl(normalized); }catch{}
+      saveTabs();
+      renderTabs();
+    }
+  }
   window.native.setConfig({ lastUrl: cfg.lastUrl, history: cfg.history });
+  window.native.recentPageAdd?.({url:normalized,title:tabTitle({url:normalized})}).catch?.(()=>{});
+  syncFavoriteButton();
 }
+
 
 wv?.addEventListener('did-navigate', e => rememberPage(e.url));
 wv?.addEventListener('did-navigate-in-page', e => rememberPage(e.url));
@@ -1107,29 +1888,68 @@ wv?.addEventListener('dom-ready', () => {
   setTimeout(() => document.body.classList.remove('page-ready'), 360);
 });
 
+
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, ch => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[ch]));
+}
+
+async function loadProfiles(){
+  if(!sysProfileList) return;
+  const r=await window.native.getProfiles();
+  const profiles=r?.profiles||{};
+  sysProfileList.innerHTML=Object.keys(profiles).map(name=>`<div class="profile-chip"><span>${escapeHtml(name)}</span><button data-load-profile="${escapeHtml(name)}">Загрузить</button><button data-delete-profile="${escapeHtml(name)}">×</button></div>`).join('')||'<span class="system-status">Профилей пока нет.</span>';
+  sysProfileList.querySelectorAll('[data-load-profile]').forEach(b=>b.addEventListener('click',async()=>{const r=await window.native.loadProfile(b.dataset.loadProfile);if(!r?.ok){toast('Профиль не найден','error');return;}Object.assign(cfg,r.profile||{});applyTheme(cfg.theme||'violet',{skipSave:true});window.native.setConfig(r.profile||{});toast(`Профиль «${b.dataset.loadProfile}» загружен`);}));
+  sysProfileList.querySelectorAll('[data-delete-profile]').forEach(b=>b.addEventListener('click',async()=>{await window.native.deleteProfile(b.dataset.deleteProfile);loadProfiles();toast('Профиль удалён');}));
+}
+async function loadSystems(){
+  if(!sysStatus)return;
+  sysStatus.textContent='Собираю состояние системы…';
+  const [status,cache,shots]=await Promise.all([window.native.systemStatus(),window.native.cacheInfo(),window.native.listScreenshots()]);
+  sysApi.textContent=status?.api?.ok?`${status.api.ms||0} мс`:'Недоступен';
+  sysApiDetail.textContent=status?.api?.endpoint||'API health';
+  sysMemory.textContent=`${status?.memoryMB||0} MB`;
+  sysSiteMemory.textContent=`WebView ${status?.siteMemoryMB||0} MB`;
+  sysCache.textContent=`${cache?.sessionCacheMB||0} MB`;
+  sysScreenshots.textContent=`Скриншоты ${cache?.screenshots||shots?.items?.length||0}`;
+  const gpu=String(status?.gpu?.gpu_compositing||'unknown');
+  sysGpu.textContent=gpu==='enabled'?'Включён':gpu==='disabled'?'Выключен':gpu;
+  sysStatus.textContent=`Uptime: ${Math.floor((status?.uptime||0)/60)} мин · Performance: ${status?.performance||'balanced'} · Recovery: ${status?.autoRecovery?'ON':'OFF'}`;
+  loadProfiles();
+}
+document.getElementById('sys-refresh')?.addEventListener('click',loadSystems);
+document.getElementById('sys-clear-cache')?.addEventListener('click',async()=>{const r=await window.native.clearApiCache();toast(r?.ok?'API-кэш очищен':'Не удалось очистить кэш',r?.ok?'ok':'error');loadSystems();});
+document.getElementById('sys-clear-session')?.addEventListener('click',async()=>{const r=await window.native.clearCache();toast(r?.ok?'WebView-кэш очищен':'Не удалось очистить кэш',r?.ok?'ok':'error');loadSystems();});
+document.getElementById('sys-profile-save')?.addEventListener('click',async()=>{const name=sysProfileName?.value.trim();if(!name){toast('Укажи название профиля','error');return;}const data={theme:cfg.theme,custom:cfg.custom,visual:cfg.visual,playbackSpeed:cfg.playbackSpeed,playbackPreferences:cfg.playbackPreferences||{},performance:cfg.performance,lowPower:cfg.lowPower,autoHide:cfg.autoHide};const r=await window.native.saveProfile(name,data);if(r?.ok){sysProfileName.value='';loadProfiles();toast(`Профиль «${name}» сохранён`)}else toast(r?.error||'Не удалось сохранить профиль','error');});
+
 btnBack.addEventListener('click', () => wv.goBack());
 btnFwd.addEventListener('click', () => wv.goForward());
-btnHome.addEventListener('click', () => { if (currentSite) wv.loadURL(SITES[currentSite].url); });
+btnHome.addEventListener('click', () => { if (currentSite) loadTabUrl(activeWebview, SITES[currentSite].url); });
 btnReload.addEventListener('click', () => wv.reload());
 
 btnMax.addEventListener('click', () => window.native.toggleMaximize());
 btnFs.addEventListener('click', () => window.native.toggleFullscreen());
 btnClose.addEventListener('click', () => window.native.close());
 
-window.native.onWinState((max) => btnMax.classList.toggle('is-max', max));
+window.native.onWinState((max) => { btnMax.classList.toggle('is-max', max); document.body.classList.toggle('is-maximized', max); setTimeout(()=>{ try{ syncViewAreaHeight?.(); }catch{} try{ activeWebview?.executeJavaScript('window.dispatchEvent(new Event("resize"))', false); }catch{} }, 80); });
 window.native.onFsState((fs) => document.body.classList.toggle('is-fs', fs));
 
 const commands = [
   ['Пауза / продолжить', () => window.native.mediaAction('playpause')],
+  ['Picture-in-Picture', async () => { const r = await window.native.togglePiP(); if (!r?.ok) toast('Не удалось включить PiP', 'error'); }],
+  ['Скорость 0.5×', () => { currentPlayerSpeed = 0.5; window.native.setPlaybackSpeed(0.5); renderPlayerSpeed(); }],
+  ['Скорость 1×', () => { currentPlayerSpeed = 1; window.native.setPlaybackSpeed(1); renderPlayerSpeed(); }],
+  ['Скорость 1.5×', () => { currentPlayerSpeed = 1.5; window.native.setPlaybackSpeed(1.5); renderPlayerSpeed(); }],
+  ['Скорость 2×', () => { currentPlayerSpeed = 2; window.native.setPlaybackSpeed(2); renderPlayerSpeed(); }],
   ['Громче', () => { window.native.setVolume(5); setTimeout(refreshVolume, 50); }],
   ['Тише', () => { window.native.setVolume(-5); setTimeout(refreshVolume, 50); }],
   ['Выключить / включить звук', () => { window.native.toggleMute(); setTimeout(refreshVolume, 50); }],
   ['10 секунд назад', () => window.native.seek(-10)],
   ['10 секунд вперёд', () => window.native.seek(10)],
   ['Следующая серия', () => window.native.mediaAction('next')],
-  ['Открыть предыдущий / следующий адрес', () => { const next = currentSite === 'cc' ? 'co' : 'cc'; currentSite = next; wv.loadURL(SITES[next].url); }],
-  ['animeon.cc', () => { currentSite = 'cc'; wv.loadURL(SITES.cc.url); }],
-  ['v1.animeon.co', () => { currentSite = 'co'; wv.loadURL(SITES.co.url); }],
+  ['Открыть предыдущий / следующий адрес', () => { openSite(getOtherSiteId()); }],
+  ['animeon.cc', () => openSite('cc')],
+  ['v1.animeon.co', () => openSite('co')],
   ['Предыдущая серия', () => window.native.mediaAction('previous')],
   ['Сделать скриншот', () => window.native.takeScreenshot()],
   ['Поверх всех окон', () => window.native.toggleAlwaysOnTop()],
@@ -1187,8 +2007,8 @@ function renderCommands(filter = '') {
   });
 }
 window.native.onOpenCommandPalette?.(() => openCommandPalette());
-window.native.onGoHome?.(() => { if (currentSite) wv.loadURL(SITES[currentSite].url); });
-window.native.onSwitchSite?.(() => { const next = currentSite === 'cc' ? 'co' : 'cc'; currentSite = next; wv.loadURL(SITES[next].url); });
+window.native.onGoHome?.(() => { if (currentSite) openSite(currentSite); });
+window.native.onSwitchSite?.(() => { openSite(getOtherSiteId()); });
 function openCommandPalette() {
   if (!commandPalette) return;
   commandPalette.classList.add('show');
@@ -1293,7 +2113,6 @@ wv.addEventListener('dom-ready', () => {
   window.native.setTaskbarProgress?.(0.78);
   updateNav();
   applyGuestStyles();
-  revealApp();
 });
 
 wv.addEventListener('did-stop-loading', () => {
@@ -1302,6 +2121,7 @@ wv.addEventListener('did-stop-loading', () => {
   updateNav();
   window.native.setTaskbarProgress?.(1);
   setTimeout(() => window.native.setTaskbarProgress?.(-1), 350);
+  revealApp();
 });
 
 wv.addEventListener('did-fail-load', (e) => {
@@ -1416,43 +2236,40 @@ document.body.classList.toggle('low-power', lowPowerToggle.checked || performanc
 
 if (appInfo.version) stVersion.textContent = `AnimeOn Desktop · v${appInfo.version}`;
 
-let rememberSite = false;
-let savedSite = null;
+let rememberSite = store('remember') === '1';
+let savedSite = SITES[store('site')] ? store('site') : 'co';
 try {
-  rememberSite = store('remember') === '1';
-  savedSite = rememberSite && SITES[store('site')] ? store('site') : null;
-  if (savedSite) activateSite(savedSite, { save: false });
-  else {
-    currentSite = null;
-    document.querySelectorAll('[data-site]').forEach((el) => {
-      el.classList.remove('selected', 'active');
-    });
-  }
+  activateSite(savedSite, { save: false });
   syncVisualUI();
   refreshProfiles();
 } catch (e) {
   try { console.error('[AnimeOn] startup init error', e); } catch {}
-  rememberSite = false;
-  savedSite = null;
 }
 
 startSplashProgress();
 
 try {
-  if (rememberSite && savedSite) {
-    picker.remove();
-    openSite(savedSite);
-    setTimeout(() => { if (!booted) revealApp(0); }, 6000);
-  } else {
-    setTimeout(() => {
-      revealApp(100);
+  if (picker) {
+    if (rememberSite) {
+      picker.classList.remove('show', 'hide');
+      document.body.classList.remove('picker-visible');
+    } else {
+      picker.classList.remove('hide');
       picker.classList.add('show');
       document.body.classList.add('picker-visible');
-    }, 650);
+    }
   }
+  setTimeout(() => { if (!booted) revealApp(0); }, 650);
 } catch (e) {
   try { console.error('[AnimeOn] site open error', e); } catch {}
-  try { revealApp(0); picker.classList.add('show'); document.body.classList.add('picker-visible'); } catch {}
+  try { revealApp(0); } catch {}
 }
 
 setTimeout(() => refreshUpdateStatus(true), 8000);
+
+setInterval(async () => { try { const state = await window.native.getMediaState(); if (state?.available && Number(state.duration) > 0) persistLocalPlayback(state); } catch {} }, 15000);
+
+let lastNotificationSignature='';
+async function pollAnimeNotifications(){try{if(!cfg.notify)return;const r=await window.native.notificationPoll();const items=Array.isArray(r?.items)?r.items:[];const first=items[0];if(!first)return;const sig=String(first.id||first.notification_id||first.created_at||first.title||'');if(sig&&sig!==lastNotificationSignature){if(lastNotificationSignature) toast(first.title||first.message||'Новое уведомление');lastNotificationSignature=sig;}}catch{}}
+setTimeout(pollAnimeNotifications,12000);
+setInterval(pollAnimeNotifications,300000);
