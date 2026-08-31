@@ -49,12 +49,12 @@
           <span class="sc-ico">
             <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.8 2.6 4 5.7 4 9s-1.2 6.4-4 9c-2.8-2.6-4-5.7-4-9s1.2-6.4 4-9z"/></svg>
           </span>
-          <span class="sc-info"><b>animeon.cc</b><i>основной</i></span>
+          <span class="sc-info"><b data-site-label="cc">animeon.cc</b><i>основной</i></span>
           <span class="sc-mark"></span>
         </button>
         <button class="site-card" data-site="co">
           <span class="sc-ico ru">RU</span>
-          <span class="sc-info"><b>v1.animeon.co</b><i>запасной</i></span>
+          <span class="sc-info"><b data-site-label="co">v1.animeon.co</b><i>запасной</i></span>
           <span class="sc-mark"></span>
         </button>
       </div>
@@ -77,6 +77,21 @@
         <img class="brand-mark" src="assets/logo.png" alt="" draggable="false">
       </span>
       <span class="brand-name">ANIME<em>ON</em></span>
+    </div>
+
+    <div class="page-actions" aria-label="Страницы">
+      <button id="btn-pages" class="page-action" title="Открыть список страниц">
+        <span class="page-action-icon">☰</span><span>Страницы</span>
+      </button>
+      <button id="btn-page-favorites" class="page-action" title="Открыть избранные страницы">
+        <span class="page-action-icon">★</span><span>Избранное</span>
+      </button>
+      <button id="btn-page-favorite" class="page-action page-action-add" title="Добавить текущую страницу в избранное">
+        <span class="page-action-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4.5A2.5 2.5 0 0 1 8.5 2h7A2.5 2.5 0 0 1 18 4.5V21l-6-3.5L6 21V4.5Z"/></svg></span><span>Добавить</span>
+      </button>
+      <button id="btn-new-tab" class="page-action page-action-add" title="Новая страница">
+        <span class="page-action-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14v16H5z"/><path d="M12 8v8M8 12h8"/></svg></span><span>Новая</span>
+      </button>
     </div>
 
     <nav class="nav">
@@ -121,6 +136,7 @@
           <path d="M3 16l4.5-4 3 2.6L15 10l6 6"/>
         </svg>
       </button>
+      <button id="btn-dnd" class="page-tool dnd-tool" type="button" aria-pressed="false" title="Не беспокоить: выключено"><span class="dnd-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></svg></span></button>
       <button id="btn-hotkeys-main" title="Горячие клавиши">
         <svg viewBox="0 0 24 24">
           <rect x="3" y="5" width="18" height="14" rx="2"/>
@@ -152,6 +168,20 @@
     </div>
   </header>
 
+  <div id="page-toolbar">
+    <div id="tabs-bar" class="tabs-bar"></div>
+    <div class="page-toolbar-actions">
+    </div>
+  </div>
+  <div id="find-bar" class="find-bar" hidden aria-hidden="true">
+    <span class="find-icon">⌕</span>
+    <input id="find-input" autocomplete="off" placeholder="Поиск на странице" aria-label="Поиск на странице">
+    <span id="find-count" class="find-count"></span>
+    <button id="find-prev" title="Предыдущее совпадение">↑</button>
+    <button id="find-next" title="Следующее совпадение">↓</button>
+    <button id="find-close" title="Закрыть">×</button>
+  </div>
+
   <div id="error-screen">
     <div class="error-card">
       <div class="error-logo"><img src="assets/logo.png" alt="" draggable="false"></div>
@@ -180,6 +210,16 @@
       </header>
 
       <div class="st-body">
+        <div id="settings-nav" class="settings-nav">
+          <button class="settings-nav-arrow" data-settings-scroll="prev" aria-label="Предыдущие категории">‹</button>
+          <div class="settings-nav-viewport">
+            <div class="settings-nav-list">
+              <button class="settings-nav-item active" data-settings-filter="all">Все</button><button class="settings-nav-item" data-settings-filter="main">Основные</button><button class="settings-nav-item" data-settings-filter="view">Внешний вид</button><button class="settings-nav-item" data-settings-filter="player">Вкладки</button><button class="settings-nav-item" data-settings-filter="notifications">Уведомления</button><button class="settings-nav-item" data-settings-filter="performance">Производительность</button><button class="settings-nav-item" data-settings-filter="cache">Кэш</button><button class="settings-nav-item" data-settings-filter="network">Сеть</button><button class="settings-nav-item" data-settings-filter="screenshots">Скриншоты</button><button class="settings-nav-item" data-settings-filter="updates">Обновления</button><button class="settings-nav-item" data-settings-filter="advanced">Дополнительно</button>
+            </div>
+          </div>
+          <button class="settings-nav-arrow" data-settings-scroll="next" aria-label="Следующие категории">›</button>
+        </div>
+        <div class="settings-search-wrap"><input id="settings-search" type="text" placeholder="Поиск настроек..." class="pages-search-input"><span class="settings-search-icon">⌕</span></div>
         <section class="st-section settings-group-card" data-settings-group="view">
           <div class="st-title">Внешний вид</div>
           <div class="theme-head"><span>Цвет интерфейса</span><b id="theme-name">Фиолетовый</b></div>
@@ -242,12 +282,12 @@
               <span class="sc-ico">
                 <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.8 2.6 4 5.7 4 9s-1.2 6.4-4 9c-2.8-2.6-4-5.7-4-9s1.2-6.4 4-9z"/></svg>
               </span>
-              <span class="sc-info"><b>animeon.cc</b><i>основной</i></span>
+              <span class="sc-info"><b data-site-label="cc">animeon.cc</b><i>основной</i></span>
               <span class="sc-mark"></span>
             </button>
             <button class="site-card" data-site="co">
               <span class="sc-ico ru">RU</span>
-              <span class="sc-info"><b>v1.animeon.co</b><i>запасной</i></span>
+              <span class="sc-info"><b data-site-label="co">v1.animeon.co</b><i>запасной</i></span>
               <span class="sc-mark"></span>
             </button>
           </div>
@@ -317,7 +357,7 @@
           <p class="st-hint">В профиле остаются цвет, эффекты и CSS для выбранного адреса.</p>
         </section>
 
-        <section class="st-section settings-group-card" data-settings-group="app">
+        <section class="st-section settings-group-card" data-settings-group="main">
           <div class="st-title">Поведение приложения</div>
           <div class="switch-row">
             <div class="sw-text">
@@ -428,8 +468,8 @@
           </div>
         </section>
 
-        <section class="st-section settings-group-card" data-settings-group="service">
-          <div class="st-title">Проверка, обслуживание и обновление</div>
+        <section class="st-section settings-group-card" data-settings-group="advanced">
+          <div class="st-title">Диагностика и обновление</div>
           <div class="settings-subgroup">
             <div class="settings-subtitle">Страница</div>
             <div class="settings-action-grid">
@@ -473,47 +513,26 @@
           </div>
         </section>
 
-        <section class="st-section settings-group-card" data-settings-group="app">
-          <div class="st-title">О приложении</div>
-          <p class="about-text">
-            Весь контент принадлежит ребятам из AnimeOn. Наше приложение - это просто неофициальное приложение, мы никак не связаны с их командой.
-          </p>
-          <div class="link-list">
-            <button class="link-row" data-url="https://animeon.cc">
-              <span class="sc-ico small">
-                <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.8 2.6 4 5.7 4 9s-1.2 6.4-4 9c-2.8-2.6-4-5.7-4-9s1.2-6.4 4-9z"/></svg>
-              </span>
-              <span class="sc-info"><b>AnimeOn</b><i>animeon.cc</i></span>
-            </button>
-            <button class="link-row" data-url="https://t.me/animeon">
-              <span class="lr-ico">TG</span>
-              <span class="sc-info"><b>Telegram</b><i>t.me/animeon</i></span>
-            </button>
-          </div>
-        </section>
+        <section class="st-section settings-group-card" data-settings-group="player"><div class="st-title">Вкладки</div><div class="switch-row"><div class="sw-text"><b>Сохранять открытые сайты</b><i>Все вкладки останутся после перезапуска приложения</i></div><label class="switch"><input type="checkbox" id="save-tabs-toggle" checked><span class="sw-track"><span class="sw-knob"></span></span></label></div><div class="switch-row"><div class="sw-text"><b>Восстанавливать последний сайт</b><i>При запуске откроется та же вкладка, где ты остановился</i></div><label class="switch"><input type="checkbox" id="restore-last-toggle" checked><span class="sw-track"><span class="sw-knob"></span></span></label></div><div class="settings-action-grid"><button id="btn-clear-tabs" class="ghost-btn">Очистить вкладки</button></div></section>
+        <section class="st-section settings-group-card" data-settings-group="notifications"><div class="st-title">Уведомления</div><div class="switch-row"><div class="sw-text"><b>Уведомления о событиях</b><i>Разрешить уведомления приложения</i></div><label class="switch"><input type="checkbox" id="notify-toggle-advanced"><span class="sw-track"><span class="sw-knob"></span></span></label></div><p class="st-hint">Режим «Не беспокоить» теперь переключается кнопкой с колокольчиком под панелью вкладок.</p></section>
+        <section class="st-section settings-group-card" data-settings-group="cache"><div class="st-title">Кэш</div><div class="switch-row"><div class="sw-text"><b>Автоматическая очистка</b><i>Чистить кэш после превышения лимита</i></div><label class="switch"><input type="checkbox" id="cache-auto-toggle"><span class="sw-track"><span class="sw-knob"></span></span></label></div><div class="cache-limit-card"><div class="cache-limit-head"><span>Лимит кэша</span><span id="cache-info-text" class="cache-info"></span></div><div class="cache-limit-control"><input id="cache-limit" type="number" min="64" max="16384" step="64" class="cache-input"><span class="cache-unit">МБ</span></div><div class="cache-limit-hint">от 64 до 16384 МБ</div></div><div class="settings-action-grid"><button id="btn-cache-refresh" class="ghost-btn">Обновить размер</button><button id="btn-cache-clean" class="ghost-btn">Очистить сейчас</button></div></section>
+        <section class="st-section settings-group-card" data-settings-group="performance"><div class="st-title">Производительность</div><div class="switch-row"><div class="sw-text"><b>Экономия памяти</b><i>Снижает активность страницы в фоне</i></div><label class="switch"><input type="checkbox" id="memory-saver-toggle"><span class="sw-track"><span class="sw-knob"></span></span></label></div></section>
+        <section class="st-section settings-group-card" data-settings-group="network"><div class="st-title">Сеть</div><div class="settings-action-grid"><button id="btn-network-check" class="ghost-btn">Проверить соединение</button><button id="btn-network-open-log" class="ghost-btn">Открыть журнал</button></div></section>
+        <section class="st-section settings-group-card" data-settings-group="screenshots"><div class="st-title">Скриншоты</div><p class="st-hint">Просто скриншоты.</p><div class="settings-action-grid"><button id="btn-screenshots-open-settings" class="ghost-btn">Открыть галерею</button><button id="btn-screenshots-folder-settings" class="ghost-btn">Открыть папку</button></div></section>
+        <section class="st-section settings-group-card" data-settings-group="advanced"><div class="st-title">Журнал ошибок</div><p class="st-hint">Журнал помогает разобраться, если приложение работает неправильно.</p><div class="settings-action-grid"><button id="btn-open-log" class="ghost-btn">Открыть журнал</button><button id="btn-copy-log" class="ghost-btn">Скопировать журнал</button><button id="btn-clear-log" class="ghost-btn danger-outline">Очистить журнал</button></div></section>
+        <section class="st-section settings-group-card" data-settings-group="updates"><div class="st-title">О программе</div><div class="about-card"><div class="about-head"><img src="assets/logo.png" alt="" class="about-logo"><div class="about-info"><b>AnimeOn Desktop</b><span id="about-version-value"></span><i>Неофициальный десктоп-клиент для AnimeOn • v1.4.0</i></div></div><p class="about-text" style="margin:12px 0 0">Это неофициальное приложение. Я никак не связан с командой AnimeOn, а весь контент принадлежит им </p></div><div class="settings-action-grid" style="margin-top:12px"><button id="btn-about-check-update" class="ghost-btn accent">Проверить обновления</button><button id="btn-about-source" class="ghost-btn">Исходный код</button></div></section>
 
-        <section class="st-section settings-group-card" data-settings-group="app">
-          <div class="st-title">Исходный код</div>
-          <p class="about-text">
-            Это неофициальный проект. Приложение никак не связано с командой AnimeOn, а весь контент принадлежит им.
-          </p>
-          <div class="link-list">
-            <button class="link-row" data-url="https://github.com/Neukluziy">
-              <span class="lr-ico">GH</span>
-              <span class="sc-info"><b>Автор</b><i>github.com/Neukluziy</i></span>
-            </button>
-            <button class="link-row" data-url="https://github.com/Neukluziy/animeon-desktop">
-              <span class="lr-ico">&lt;/&gt;</span>
-              <span class="sc-info"><b>Исходный код</b><i>github.com/Neukluziy/animeon-desktop</i></span>
-            </button>
-          </div>
-        </section>
       </div>
     </div>
   </div>
 
 
 
+
+
+  <div id="pages-modal" class="hotkeys-modal"><div class="hotkeys-card pages-card pages-card-single"><header class="st-head"><div class="st-titles"><b>Страницы</b><i>Недавно открытые страницы</i></div><button id="btn-close-pages" title="Закрыть">×</button></header><div class="pages-single-body"><div class="pages-toolbar"><button id="pages-select-toggle" class="ghost-btn small">Выбрать</button><button id="pages-delete-selected" class="ghost-btn small danger-outline" style="display:none">Удалить (<span id="pages-selected-count">0</span>)</button><button id="pages-cancel-select" class="ghost-btn small" style="display:none">Отмена</button></div><div class="settings-subtitle">Недавние</div><div class="pages-search-wrap"><input id="pages-search" type="text" placeholder="Поиск по страницам..." class="pages-search-input"><span class="pages-search-icon">⌕</span></div><div id="recent-pages-list" class="pages-list"></div></div></div></div>
+
+  <div id="favorites-modal" class="hotkeys-modal"><div class="hotkeys-card pages-card pages-card-single"><header class="st-head"><div class="st-titles"><b>Избранное</b><i>Сохранённые страницы AnimeOn</i></div><button id="btn-close-favorites" title="Закрыть">×</button></header><div class="pages-single-body"><div class="pages-toolbar"><button id="favorites-select-toggle" class="ghost-btn small">Выбрать</button><button id="favorites-delete-selected" class="ghost-btn small danger-outline" style="display:none">Удалить (<span id="favorites-selected-count">0</span>)</button><button id="favorites-cancel-select" class="ghost-btn small" style="display:none">Отмена</button></div><div class="settings-subtitle">Избранные страницы</div><div class="pages-search-wrap"><input id="favorites-search" type="text" placeholder="Поиск по избранному..." class="pages-search-input"><span class="pages-search-icon">⌕</span></div><div id="favorite-pages-list" class="pages-list"></div></div></div></div>
 
   <div id="hotkeys-modal" class="hotkeys-modal">
     <div class="hotkeys-card">
@@ -583,13 +602,12 @@
   </div>
 
   <div id="media-overlay" aria-live="polite"><span id="media-overlay-icon"></span><b id="media-overlay-text"></b></div>
-
   <div id="toast-stack" aria-live="polite"></div>
 
   <div id="progress"></div>
 
   <div id="view-area">
-    <webview id="wv" allowpopups></webview>
+    <webview id="wv" class="tab-active" allowpopups partition="persist:animeon" webpreferences="webSecurity=no,contextIsolation=yes,sandbox=no,allowRunningInsecureContent=yes"></webview>
   </div>
 
   <script src="renderer/features.js"></script>
