@@ -76,7 +76,7 @@ npx electron-builder --win
 Официальные сайты:
 
 * https://animeon.cc
-* https://v1.animeon.co
+* https://v2.animeon.co
 
 Telegram:
 
