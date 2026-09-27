@@ -72,7 +72,7 @@ npx electron-builder --win
 * x64
 
 ## AnimeOn
-* мой профиль https://v2.animeon.co/user/neukluziy
+* мой профиль [Нажать](https://v2.animeon.co/user/neukluziy)
 
 Официальные сайты:
 
