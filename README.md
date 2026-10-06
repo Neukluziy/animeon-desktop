@@ -68,7 +68,7 @@ npm run dist
 * x64
 
 ## AnimeOn
-* мой профиль [нажми]([https://v2.animeon.co/user/neukluziy](https://v2.animeon.co/user/cdx))
+* мой профиль [нажми](https://v2.animeon.co/user/neukluziy](https://v2.animeon.co/user/cdx)
 
 Официальные сайты:
 
