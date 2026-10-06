@@ -52,10 +52,6 @@ npm start
 ```bash
 npm run dist
 ```
-либо
-```bash
-npx electron-builder --win
-```
 
 После завершения сборки готовые файлы появятся в папке `dist`.
 
@@ -72,7 +68,7 @@ npx electron-builder --win
 * x64
 
 ## AnimeOn
-* мой профиль [нажми](https://v2.animeon.co/user/neukluziy)
+* мой профиль [нажми]([https://v2.animeon.co/user/neukluziy](https://v2.animeon.co/user/cdx))
 
 Официальные сайты:
 
