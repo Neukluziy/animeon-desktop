@@ -68,7 +68,6 @@ npm run dist
 * x64
 
 ## AnimeOn
-* мой профиль [нажми](https://v2.animeon.co/user/cdx)
 
 Официальные сайты:
 
@@ -78,5 +77,9 @@ npm run dist
 Telegram:
 
 * https://t.me/animeon
+
+Другое:
+
+* мой профиль [нажми](https://v2.animeon.co/user/cdx)
 
 > AnimeOn Desktop не является официальным владельцем сайта AnimeOn и разработан отдельно для использования AnimeOn на Windows.
