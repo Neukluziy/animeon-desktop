@@ -78,4 +78,8 @@ Telegram:
 
 * https://t.me/animeon
 
+Другое:
+
+Мой [Профиль](https://v2.animeon.co/user/cdx)
+
 > AnimeOn Desktop не является официальным владельцем сайта AnimeOn и разработан отдельно для использования AnimeOn на Windows.
