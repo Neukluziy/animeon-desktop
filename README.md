@@ -6,6 +6,10 @@ AnimeOn Desktop — приложение для Windows, которое позв
 
 Программа сделана для более удобного просмотра аниме на ПК.
 
+## Профиль разработчика
+
+[Neukluziy](https://v2.animeon.co/user/cdx)
+
 ## Установка
 
 ### Установщик
@@ -57,30 +61,26 @@ npm run dist
 
 Проект собирает две версии приложения:
 
-* **NSIS Installer** — обычный установщик Windows.
-* **Portable** — версия приложения, которая не требует установки.
+- **NSIS Installer** — обычный установщик Windows.
+- **Portable** — версия приложения, которая не требует установки.
 
 Сборка предназначена для **Windows x64**.
 
 ## Системные требования
 
-* Windows 10 / 11
-* x64
+- Windows 10 / 11
+- x64
+
 
 ## AnimeOn
 
 Официальные сайты:
 
-* https://animeon.cc
-* https://v2.animeon.co
+- https://animeon.cc
+- https://v2.animeon.co
 
 Telegram:
 
-* https://t.me/animeon
+- https://t.me/animeon
 
-Другое:
-
-Мой [профиль](https://v2.animeon.co/user/cdx)
-
-
-> AnimeOn Desktop не является официальным владельцем сайта AnimeOn и разработан отдельно для использования AnimeOn на Windows.
+> AnimeOn Desktop не является официальным клиентом сайта AnimeOn и разработан отдельно для использования AnimeOn на Windows.
