@@ -6,9 +6,9 @@ AnimeOn Desktop — приложение для Windows, которое позв
 
 Программа сделана для более удобного просмотра аниме на ПК.
 
-## Чо это
+## Автор на AnimeOn
 
-[Neukluziy](https://v2.animeon.co/user/cdx)
+[Neukluziy](https://animeon.cc/user/cdx)
 
 ## Установка
 
