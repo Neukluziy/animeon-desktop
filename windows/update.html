@@ -21,6 +21,8 @@
 
     <section class="update-hero">
       <div class="hero-glow"></div>
+      <div class="orb o1"></div>
+      <div class="orb o2"></div>
       <div class="hero-icon">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v11m0 0 4-4m-4 4-4-4M5 17v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2"/></svg>
       </div>
@@ -49,9 +51,13 @@
           <span class="eyebrow">ИЗМЕНЕНИЯ</span>
           <h2>Что нового</h2>
         </div>
-        <span class="release-dot"></span>
+        <div class="meta-chips">
+          <span class="release-dot"></span>
+          <span class="force-chip hidden" id="force-chip">Обязательно</span>
+        </div>
       </div>
       <div class="ud-notes" id="ud-notes">Загружаю описание обновления…</div>
+      <div class="history-list" id="history-list"></div>
     </section>
 
     <section class="download-card" id="download-card">
@@ -65,8 +71,8 @@
         </div>
         <span class="udp-pct" id="udp-pct">0%</span>
       </div>
-      <div class="udp-bar"><i id="udp-fill"></i></div>
-      <div class="udp-meta"><span id="udp-size">—</span><span id="udp-speed">—</span></div>
+      <div class="udp-bar" id="ud-progress"><i id="udp-fill"></i></div>
+      <div class="udp-meta"><span id="udp-size">—</span><canvas id="spark" width="240" height="56"></canvas><span id="udp-speed">—</span></div>
     </section>
 
     <footer class="update-actions">
