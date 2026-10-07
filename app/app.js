@@ -1,38 +1,67 @@
 const { app, BrowserWindow, ipcMain, shell, Tray, Notification, screen, globalShortcut, session, dialog, nativeImage, clipboard } = require('electron');
-const { spawn } = require('node:child_process');
+const { createUpdateManager } = require('./update-manager');
+const { createMainWindowFactory } = require('./main-window');
+const { createAccessKeyManager } = require('./access-key-manager');
+const { createWatchLibrary } = require('./watch-library');
+const { createNetworkManager } = require('./network-manager');
+const { createSettingsIpc } = require('./settings-ipc');
+const { createMediaController } = require('./media-controller');
 const path = require('node:path');
 const fs = require('node:fs');
+const { fileURLToPath } = require('node:url');
 
-const { SITE_RE, AUTH_RE, TELEGRAM_RE, APP_VERSION, compareVersions } = require('./modules');
+const { DiscordRPC } = require('./discord-rpc');
+const { SITE_RE, TELEGRAM_RE, APP_VERSION, compareVersions } = require('./modules');
+const { parseProxyEndpoint, buildDiscordActivity, DEFAULT_DISCORD_RPC_SETTINGS } = require('./utils');
 const { API_BASE, API_VERSION, request: apiRequest, get: apiGet, post: apiPost, health: apiHealth } = require('./api-client');
 const configPath = path.join(app.getPath('userData'), 'config.json');
+const accessKeyPath = path.join(app.getPath('userData'), 'access-key.json');
 const screenshotsDir = path.join(app.getPath('pictures'), 'AnimeOn');
 
-function ensureScreenshotsDir() {
-  try { fs.mkdirSync(screenshotsDir, { recursive: true }); } catch {}
-}
-
-function isInScreenshotsDir(p) {
+function isTrustedAppEvent(event) {
   try {
-    const resolved = path.resolve(String(p || ''));
-    const rel = path.relative(screenshotsDir, resolved);
-    return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
+    const frame = event.senderFrame;
+    if (!frame || frame !== event.sender.mainFrame) return false;
+    const url = new URL(frame.url);
+    if (url.protocol !== 'file:') return false;
+    const filePath = path.resolve(fileURLToPath(url));
+    const relative = path.relative(path.resolve(__dirname, '..'), filePath);
+    return relative !== '' && relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
   } catch {
     return false;
   }
 }
 
-function formatTimestamp(d = new Date()) {
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}_${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}`;
+function isTrustedAuthUrl(value) {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'https:') return false;
+    const host = url.hostname.toLowerCase();
+    return host === 'accounts.google.com' || host === 'apis.google.com' ||
+      host === 'googleusercontent.com' || host.endsWith('.googleusercontent.com') ||
+      host === 'oauth.telegram.org' || host === 'telegram.org' || host.endsWith('.telegram.org');
+  } catch {
+    return false;
+  }
 }
+
+function isAuthFlowUrl(value) {
+  if (isTrustedAuthUrl(value)) return true;
+  try {
+    const url = new URL(value);
+    return SITE_RE.test(url.href) && /\/(login|signin|auth|oauth)(?:\/|$)/i.test(url.pathname);
+  } catch {
+    return false;
+  }
+}
+
 let config = {
   theme: 'violet',
   custom: '#8b5cf6',
   site: 'co',
   siteList: [
     { id: 'one', url: 'https://animeon.cc/', label: 'animeon.cc' },
-    { id: 'two', url: 'https://v1.animeon.co/', label: 'v1.animeon.co' },
+    { id: 'two', url: 'https://v2.animeon.co/', label: 'v2.animeon.co' },
   ],
   remember: '0',
   notify: false,
@@ -43,12 +72,13 @@ let config = {
   autoRecovery: true,
   performance: 'balanced',
   lowPower: false,
-  autoHide: true,
+  autoHide: false,
   closeBehavior: 'ask',
   alwaysOnTop: false,
   hotkeys: {},
   customCss: { cc: '', co: '' },
   smoothSite: true,
+  showSiteScrollbars: false,
   visual: { radius: 18, opacity: 92, blur: 0, scale: 100, density: 100, accentGlow: 70, animations: 'smooth' },
   profiles: {},
   lastUrl: '',
@@ -66,12 +96,20 @@ let config = {
   errorLog: [],
   memorySaver: false,
   startupPolicyFixed: false,
+  accessKeyEnabled: false,
+  accessKeyPromptDismissed: false,
   api: { baseUrl: API_BASE, clientVersion: API_VERSION, timeout: 10000 },
   playbackPositions: {},
   playbackSpeed: 1,
   resumeEnabled: true,
   autoNext: false,
+  watchNotes: [],
   library: { favorites: [], continueWatching: [], localHistory: [] },
+  autoUpdate: true,
+  silentUpdates: true,
+  lastGoodVersion: app.getVersion(),
+  rollbackVersion: null,
+  discordRpc: { ...DEFAULT_DISCORD_RPC_SETTINGS },
 };
 
 try {
@@ -80,7 +118,7 @@ try {
 if (!Array.isArray(config.siteList) || config.siteList.length < 2) {
   config.siteList = [
     { id: 'one', url: 'https://animeon.cc/', label: 'animeon.cc' },
-    { id: 'two', url: 'https://v1.animeon.co/', label: 'v1.animeon.co' },
+    { id: 'two', url: 'https://v2.animeon.co/', label: 'v2.animeon.co' },
   ];
 }
 config.siteList = config.siteList.slice(0, 2).map((site, index) => {
@@ -94,6 +132,9 @@ config.siteList = config.siteList.slice(0, 2).map((site, index) => {
 });
 if (!config.customCss || typeof config.customCss !== 'object') config.customCss = { cc: '', co: '' };
 if (typeof config.smoothSite !== 'boolean') config.smoothSite = true;
+if (typeof config.showSiteScrollbars !== 'boolean') config.showSiteScrollbars = false;
+if (typeof config.autoMirror !== 'boolean') config.autoMirror = true;
+if (!config.network || typeof config.network !== 'object') config.network = { mode: 'system', host: '', port: 0, user: '', pass: '', doh: false };
 if (!config.visual || typeof config.visual !== 'object') config.visual = { radius:18, opacity:92, blur:0, scale:100, density:100, accentGlow:70, animations:'smooth' };
 if (Number(config.visual.blur) === 18) config.visual.blur = 0;
 if (!config.profiles || typeof config.profiles !== 'object') config.profiles = {};
@@ -116,12 +157,28 @@ if (!config.playbackPositions || typeof config.playbackPositions !== 'object' ||
 if (!Number.isFinite(Number(config.playbackSpeed)) || ![0.25,0.5,0.75,1,1.25,1.5,1.75,2].includes(Number(config.playbackSpeed))) config.playbackSpeed = 1;
 if (typeof config.resumeEnabled !== 'boolean') config.resumeEnabled = true;
 if (typeof config.autoNext !== 'boolean') config.autoNext = false;
+if (!Array.isArray(config.watchNotes)) config.watchNotes = [];
+config.watchNotes = config.watchNotes.slice(-1000);
+delete config.subtitleSettings;
+delete config.spoilerProgress;
+delete config.spoilerShield;
+delete config.plugins;
+delete config.safeMode;
 if (!config.library || typeof config.library !== 'object') config.library = { favorites: [], continueWatching: [], localHistory: [] };
 for (const key of ['favorites','continueWatching','localHistory']) if (!Array.isArray(config.library[key])) config.library[key] = [];
 if (config.api.baseUrl !== API_BASE) config.api.baseUrl = API_BASE;
 if (!Number.isFinite(Number(config.api.timeout))) config.api.timeout = 10000;
 if (typeof config.lastUrl !== 'string') config.lastUrl = '';
 if (typeof config.startupPolicyFixed !== 'boolean') config.startupPolicyFixed = false;
+if (typeof config.autoUpdate !== 'boolean') config.autoUpdate = true;
+if (typeof config.silentUpdates !== 'boolean') config.silentUpdates = true;
+delete config.updateChannel;
+if (typeof config.lastGoodVersion !== 'string') config.lastGoodVersion = app.getVersion();
+if (!config.rollbackVersion || typeof config.rollbackVersion !== 'string') config.rollbackVersion = null;
+config.discordRpc = { ...DEFAULT_DISCORD_RPC_SETTINGS, ...(config.discordRpc && typeof config.discordRpc === 'object' ? config.discordRpc : {}) };
+delete config.discordRpc.showDubbing;
+config.accessKeyEnabled = config.accessKeyEnabled === true;
+config.accessKeyPromptDismissed = config.accessKeyPromptDismissed === true;
 
 function buildVisualCss() {
   const v = config.visual || {};
@@ -143,6 +200,17 @@ function saveConfig() {
   } catch {}
 }
 
+if (Object.hasOwn(config, 'watchStats')) {
+  delete config.watchStats;
+  saveConfig();
+}
+
+function ensureRollbackDir() {
+  const dir = path.join(app.getPath('userData'), 'rollback');
+  try { fs.mkdirSync(dir, { recursive: true }); } catch {}
+  return dir;
+}
+
 function applySideEffects(patch) {
   if ('autostart' in patch) {
     try { app.setLoginItemSettings({ openAtLogin: !!config.autostart, path: process.execPath, args: [] }); } catch {}
@@ -153,8 +221,7 @@ function applySideEffects(patch) {
 }
 
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
-app.commandLine.appendSwitch('enable-gpu-rasterization');
-app.commandLine.appendSwitch('enable-zero-copy');
+if (process.argv.includes('--disable-gpu')) app.disableHardwareAcceleration();
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -166,13 +233,84 @@ let tray = null;
 let trayMenuWin = null;
 let telegramWin = null;
 let siteWc = null;
-let volumeState = { volume: 100, muted: false };
-let mediaPollTimer = null;
-let lastResumeUrl = '';
-let lastPlaybackPersist = 0;
 let lastMediaState = null;
 let sleepTimerHandle = null;
-let lastAutoNextUrl = '';
+let powerPausedBySystem = false;
+let discordRPC = null;
+let discordActivityTimer = null;
+let discordRpcRevision = 0;
+const accessKeyManager = createAccessKeyManager({
+  app,
+  fs,
+  ipcMain,
+  path,
+  session,
+  accessKeyPath,
+  config,
+  sitePattern: SITE_RE,
+  isTrustedAppEvent,
+  saveConfig,
+  getWindow: () => win,
+  setQuitting: (value) => { quitting = value; },
+});
+const networkManager = createNetworkManager({
+  app,
+  session,
+  ipcMain,
+  config,
+  parseProxyEndpoint,
+  saveConfig,
+  writeLog,
+  apiHealth,
+  getWindow: () => win,
+});
+const { applyNetworkSettings } = networkManager;
+const watchLibrary = createWatchLibrary({
+  ipcMain,
+  fs,
+  path,
+  nativeImage,
+  shell,
+  clipboard,
+  screenshotsDir,
+  getWindow: () => win,
+  getSiteContents: () => siteWc,
+  getLatestMediaState: () => lastMediaState,
+  config,
+  saveConfig,
+  isTrustedAppEvent,
+  pageLabel,
+  sanitizeName,
+  writeLog,
+});
+const { takeScreenshot } = watchLibrary;
+const settingsIpc = createSettingsIpc({
+  ipcMain,
+  app,
+  config,
+  dialog,
+  fs,
+  path,
+  shell,
+  clipboard,
+  session,
+  getWindow: () => win,
+  getSiteContents: () => siteWc,
+  saveConfig,
+  applySideEffects,
+  applyDiscordRpcRuntime,
+  normalizePageUrl,
+  rememberRecentPage,
+  pageLabel,
+  setSleepTimer,
+  logPath: path.join(app.getPath('userData'), 'animeon.log'),
+  screenshotsDir,
+  apiHealth,
+  apiBase: API_BASE,
+  apiVersion: API_VERSION,
+  discordDefaults: DEFAULT_DISCORD_RPC_SETTINGS,
+});
+const registeredHotkeyAccelerators = new Set();
 const logPath = path.join(app.getPath('userData'), 'animeon.log');
 function writeLog(level, message, meta) {
   try {
@@ -310,7 +448,20 @@ function loadWindowState() {
   try {
     const p = path.join(app.getPath('userData'), 'window-state.json');
     const data = JSON.parse(fs.readFileSync(p, 'utf8'));
-    return { ...defaults, ...data };
+    const width = Math.max(480, Math.min(7680, Number(data.width) || defaults.width));
+    const height = Math.max(360, Math.min(4320, Number(data.height) || defaults.height));
+    let x = Number.isFinite(Number(data.x)) ? Number(data.x) : undefined;
+    let y = Number.isFinite(Number(data.y)) ? Number(data.y) : undefined;
+    if (x !== undefined && y !== undefined) {
+      try {
+        const inside = screen.getAllDisplays().some((d) => {
+          const a = d.workArea || d.bounds;
+          return x >= a.x - width + 80 && x <= a.x + a.width - 80 && y >= a.y - 40 && y <= a.y + a.height - 40;
+        });
+        if (!inside) { x = undefined; y = undefined; }
+      } catch {}
+    }
+    return { width, height, x, y, maximized: !!data.maximized };
   } catch { return defaults; }
 }
 
@@ -392,561 +543,97 @@ function createTelegramWindow(url) {
   telegramWin.loadURL(url);
 }
 
-function createWindow() {
-  try{ app.setAppUserModelId('co.animeon.desktop'); }catch{}
-  const ws = loadWindowState();
-  let winIcon;
-  try{
-    const icoPath=path.join(__dirname, '../assets', 'logo.ico');
-    const pngPath=path.join(__dirname, '../assets', 'logo.png');
-    if(fs.existsSync(icoPath)) winIcon=nativeImage.createFromPath(icoPath);
-    else if(fs.existsSync(pngPath)) winIcon=nativeImage.createFromPath(pngPath);
-  }catch{}
-  win = new BrowserWindow({
-    width: ws.width,
-    height: ws.height,
-    x: Number.isFinite(ws.x) ? ws.x : undefined,
-    y: Number.isFinite(ws.y) ? ws.y : undefined,
-    minWidth: 480,
-    minHeight: 360,
-    backgroundColor: '#0a0a0a',
-    frame: false,
-    show: false,
-    icon: winIcon || path.join(__dirname, '../assets', 'logo.ico'),
-    title: 'AnimeOn',
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: false,
-      webviewTag: true,
-      spellcheck: false,
-    },
-  });
+const mediaController = createMediaController({
+  ipcMain,
+  config,
+  saveConfig,
+  getWindow: () => win,
+  getSiteContents: () => siteWc,
+  getTray: () => tray,
+  getLatestMediaState: () => lastMediaState,
+  setLatestMediaState: (value) => { lastMediaState = value; },
+  isTrustedAppEvent,
+  updateMediaSession,
+  updateThumbar,
+  updateDiscordActivity,
+});
+const {
+  applyPlaybackPreferences,
+  applyVolumeToGuest,
+  mediaAction,
+  seekVideo,
+  setMuted,
+  setVolume,
+  startMediaPolling,
+  togglePlayback,
+} = mediaController;
 
-  win.once('ready-to-show', () => { try{ if(winIcon && !winIcon.isEmpty()) win.setIcon(winIcon); }catch{} win.show(); });
-  win.setMenuBarVisibility(false);
-  win.setAlwaysOnTop(!!config.alwaysOnTop);
-  win.loadFile(path.join(__dirname, '../index.html'));
-  if (ws.maximized) win.maximize();
+const createWindow = createMainWindowFactory({
+  app,
+  BrowserWindow,
+  fs,
+  path,
+  nativeImage,
+  appDir: __dirname,
+  config,
+  loadWindowState,
+  handleLocalHotkey,
+  isQuitting: () => quitting,
+  setWindow: (value) => { win = value; },
+  ensureTray,
+  saveWindowState,
+  setupJumpList,
+  applyNetworkSettings,
+  setSiteContents: (value) => { siteWc = value; },
+  setTaskbarOverlay,
+  applyPlaybackPreferences,
+  applyVolumeToGuest,
+  buildVisualCss,
+  rememberRecentPage,
+  TELEGRAM_RE,
+  SITE_RE,
+  isTrustedAuthUrl,
+  isAuthFlowUrl,
+  shell,
+  openTelegramExternal,
+});
 
-  win.webContents.on('before-input-event', (e, input) => {
-    if (input.type !== 'keyDown') return;
-    if (handleLocalHotkey(input, e)) return;
-    const isDevToolsCombo = input.key === 'F12' ||
-      (input.control && input.shift && input.key.toLowerCase() === 'i');
-    if (!isDevToolsCombo) return;
-    try {
-      if (win.webContents.isDevToolsOpened()) { win.webContents.closeDevTools(); e.preventDefault(); return; }
-      try {
-        win.webContents.openDevTools({ mode: 'detach', activate: true });
-      } catch {
-        try { win.webContents.openDevTools({ mode: 'right', activate: true }); }
-        catch { win.webContents.toggleDevTools(); }
+let thumbarIcons = null;
+function generateThumbarIcons() {
+  if (thumbarIcons) return thumbarIcons;
+  const { nativeImage } = require('electron');
+  const size = 16;
+  function makeBuffer(draw) {
+    const buf = Buffer.alloc(size * size * 4);
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const i = (y * size + x) * 4;
+        const v = draw(x, y) ? 255 : 0;
+        buf[i] = v; buf[i + 1] = v; buf[i + 2] = v; buf[i + 3] = v;
       }
-    } catch {}
-    e.preventDefault();
-  });
-
-  win.webContents.on('unresponsive', () => {
-    console.error('[AnimeOn] Главное окно перестало отвечать (зависший рендерер).');
-  });
-  win.webContents.on('responsive', () => {
-    console.error('[AnimeOn] Главное окно снова отвечает.');
-  });
-  win.webContents.on('render-process-gone', (_event, details) => {
-    console.error('[AnimeOn] Рендерер главного окна упал:', details && details.reason);
-    if (config.autoRecovery && win && !win.isDestroyed()) {
-      try { win.loadFile(path.join(__dirname, '../index.html')); } catch {}
     }
-  });
-  let boundsSaveTimer = null;
-  const saveBounds = () => {
-    clearTimeout(boundsSaveTimer);
-    boundsSaveTimer = setTimeout(() => saveWindowState(), 180);
-  };
-  win.on('resize', saveBounds);
-  win.on('move', saveBounds);
-  win.on('unmaximize', saveBounds);
-  win.on('maximize', saveBounds);
-
-  const ua = win.webContents.getUserAgent().replace(/\sElectron\/[\d.]+/i, '');
-  win.webContents.session.setUserAgent(ua, 'ru-RU,ru');
-
-  win.on('maximize', () => win.webContents.send('win-state', true));
-  win.on('unmaximize', () => win.webContents.send('win-state', false));
-  win.on('enter-full-screen', () => win.webContents.send('fs-state', true));
-  win.on('leave-full-screen', () => win.webContents.send('fs-state', false));
-
-  win.on('close', (e) => {
-    if (!quitting && config.tray) {
-      e.preventDefault();
-      ensureTray();
-      win.hide();
-      return;
-    }
-    if (!quitting && config.closeBehavior === 'ask') {
-      e.preventDefault();
-      win.webContents.send('confirm-close');
-      return;
-    }
-    if (!quitting && config.closeBehavior === 'tray') {
-      e.preventDefault();
-      ensureTray();
-      win.hide();
-      return;
-    }
-    saveWindowState();
-  });
-
-  setupJumpList();
-
-  const siteSession = win.webContents.session;
-  siteSession.webRequest.onHeadersReceived((details, callback) => {
-    const headers = { ...(details.responseHeaders || {}) };
-    try {
-      const requestUrl = new URL(details.url);
-      const origin = String(details.requestHeaders?.Origin || details.requestHeaders?.origin || '');
-      if (origin && /(^|\.)animeon\.(cc|co)$/i.test(new URL(origin).hostname) && /(^|\.)animeon\.cloud$/i.test(requestUrl.hostname)) {
-        const key = Object.keys(headers).find(k => k.toLowerCase() === 'access-control-allow-origin');
-        if (key) delete headers[key];
-        headers['Access-Control-Allow-Origin'] = [origin];
-        const credKey = Object.keys(headers).find(k => k.toLowerCase() === 'access-control-allow-credentials');
-        if (credKey) delete headers[credKey];
-        headers['Access-Control-Allow-Credentials'] = ['true'];
-      }
-    } catch {}
-    callback({ responseHeaders: headers });
-  });
-
-  const configuredSiteSessions = new WeakSet();
-  win.webContents.on('did-attach-webview', (_, wc) => {
-    siteWc = wc;
-    try { wc.setBackgroundThrottling(config.performance === 'economy'); } catch {}
-    try { wc.setVisualZoomLevelLimits(0.5, 3); } catch {}
-    try {
-      const session = wc.session;
-      const ua = win.webContents.getUserAgent().replace(/\sElectron\/[\d.]+/i, '');
-      session.setUserAgent(ua, 'ru-RU,ru');
-      if (!configuredSiteSessions.has(session)) {
-        configuredSiteSessions.add(session);
-        session.webRequest.onHeadersReceived((details, callback) => {
-          const headers={...(details.responseHeaders||{})};
-          try {
-            const requestUrl=new URL(details.url);
-            const origin=String(details.requestHeaders?.Origin||details.requestHeaders?.origin||'');
-            const allowedOrigin=origin && /(^|\.)animeon\.(cc|co)$/i.test(new URL(origin).hostname);
-            const isCloud=/(^|\.)animeon\.cloud$/i.test(requestUrl.hostname);
-            if (allowedOrigin && isCloud) {
-              for (const key of Object.keys(headers)) {
-                if (/^access-control-allow-(origin|credentials|methods|headers)$/i.test(key)) delete headers[key];
-              }
-              headers['Access-Control-Allow-Origin']=[origin];
-              headers['Access-Control-Allow-Credentials']=['true'];
-              headers['Access-Control-Allow-Methods']=['GET,HEAD,OPTIONS'];
-              headers['Access-Control-Allow-Headers']=['Range,Origin,Accept,Content-Type,Authorization'];
-              headers['Access-Control-Expose-Headers']=['Content-Length,Content-Range,Accept-Ranges'];
-            }
-          } catch {}
-          callback({responseHeaders:headers});
-        });
-      }
-    } catch {}
-    wc.on('render-process-gone', () => {
-      setTaskbarOverlay('error');
-      if (config.autoRecovery && win && !win.isDestroyed()) {
-        setTimeout(() => { try { wc.reload(); } catch {} }, 700);
-      }
-    });
-    wc.on('dom-ready', async () => {
-      setTimeout(() => applyPlaybackPreferences().catch(() => {}), 500);
-      try {
-        await wc.executeJavaScript(`(() => {
-          if (!('mediaSession' in navigator)) return false;
-          const pick = () => Array.from(document.querySelectorAll('video')).find(v => !v.paused && !v.ended) || document.querySelector('video');
-          const run = (fn) => { try { const v=pick(); if(v) fn(v); } catch {} };
-          const handlers = {
-            play: () => run(v => v.play()),
-            pause: () => run(v => v.pause()),
-            seekbackward: () => run(v => { v.currentTime=Math.max(0,v.currentTime-10); }),
-            seekforward: () => run(v => { v.currentTime=Math.min(v.duration||Infinity,v.currentTime+10); }),
-            nexttrack: () => document.querySelector('[aria-label*="next" i],[title*="next" i],[class*="next" i]')?.click(),
-            previoustrack: () => document.querySelector('[aria-label*="previous" i],[title*="previous" i],[class*="previous" i]')?.click(),
-          };
-          for (const [name, fn] of Object.entries(handlers)) { try { navigator.mediaSession.setActionHandler(name, fn); } catch {} }
-          return true;
-        })()`, false);
-      } catch {}
-      try {
-        const css = config.customCss && typeof config.customCss === 'object' ? String(config.customCss[config.site === 'co' ? 'co' : 'cc'] || '') : '';
-        const injected = `${buildVisualCss()}\n${css}`;
-        if (injected.trim()) {
-          await wc.executeJavaScript(`(() => {
-            const id='__animeon_custom_css__';
-            let el=document.getElementById(id);
-            if(!el){el=document.createElement('style');el.id=id;(document.head||document.documentElement).appendChild(el);}
-            el.textContent=${JSON.stringify(injected)};
-          })()`, true);
-        const motion = buildMotionScript();
-        if (motion) await wc.executeJavaScript(motion, true);
-        }
-      } catch {}
-      try {
-        const imgs = await wc.executeJavaScript(`Array.from(document.images).map(i=>i.currentSrc||i.src).filter(Boolean).filter(u=>/^https?:\/\//i.test(u)).slice(0,10)`, false);
-        if (Array.isArray(imgs) && imgs.length) win?.webContents.send('mirror-posters', imgs);
-      } catch {}
-    });
-    wc.on('did-frame-finish-load', () => { applyVolumeToGuest().catch(() => {}); applyPlaybackPreferences().catch(() => {}); });
-    wc.on('will-navigate', (event, url) => {
-      if (TELEGRAM_RE.test(url) || /^tg:/i.test(url)) {
-        event.preventDefault();
-        openTelegramExternal(url);
-      }
-    });
-    const rememberWcPage = async (url) => {
-      try { const title=await wc.executeJavaScript('document.title||\"\"',false); rememberRecentPage(url,title); }
-      catch { rememberRecentPage(url,''); }
-    };
-    wc.on('did-navigate', (_, url) => { rememberWcPage(url); });
-    wc.on('did-navigate-in-page', (_, url) => { rememberWcPage(url); });
-    wc.on('did-finish-load', () => { try { rememberWcPage(wc.getURL()); } catch {} });
-    wc.setWindowOpenHandler(({ url }) => {
-      if (TELEGRAM_RE.test(url)) {
-        openTelegramExternal(url);
-        return { action: 'deny' };
-      }
-
-      const isAuth = AUTH_RE.test(url) || /\/(login|signin|auth|oauth)/i.test(url);
-
-      if (isAuth) {
-        return {
-          action: 'allow',
-          overrideBrowserWindowOptions: {
-            width: 520,
-            height: 700,
-            autoHideMenuBar: true,
-            title: 'Вход в аккаунт',
-            backgroundColor: '#0f0d14',
-            icon: path.join(__dirname, '../assets', 'logo.ico'),
-          },
-        };
-      }
-      if (SITE_RE.test(url)) {
-        wc.loadURL(url);
-        return { action: 'deny' };
-      }
-      if (/^tg:/i.test(url)) {
-        openTelegramExternal(url);
-        return { action: 'deny' };
-      }
-      if (/^https?:\/\//i.test(url)) shell.openExternal(url).catch?.(() => {});
-      return { action: 'deny' };
-    });
-
-    wc.on('did-create-window', (childWin) => {
-      let sawAuth = false;
-      const checkNav = (_, u) => {
-        if (AUTH_RE.test(u) || /\/(login|signin|auth|oauth|telegram)/i.test(u)) sawAuth = true;
-        else if (SITE_RE.test(u) && sawAuth) {
-          setTimeout(() => {
-            if (!childWin.isDestroyed()) childWin.close();
-            wc.reload();
-          }, 700);
-        }
-      };
-      childWin.webContents.on('did-navigate', checkNav);
-      childWin.webContents.on('did-navigate-in-page', checkNav);
-      childWin.webContents.setWindowOpenHandler(({ url }) => {
-        if (TELEGRAM_RE.test(url)) {
-          shell.openExternal(url).catch?.(() => {});
-          return { action: 'deny' };
-        }
-        if (AUTH_RE.test(url) || /\/(login|signin|auth|oauth|telegram)/i.test(url)) return { action: 'allow' };
-        if (SITE_RE.test(url)) { wc.loadURL(url); return { action: 'deny' }; }
-        if (/^tg:/i.test(url)) {
-          openTelegramExternal(url);
-          return { action: 'deny' };
-        }
-        if (/^https?:\/\//i.test(url)) { shell.openExternal(url).catch?.(() => {}); return { action: 'deny' }; }
-        return { action: 'deny' };
-      });
-      childWin.on('closed', () => {
-        if (sawAuth && !wc.isDestroyed()) {
-          setTimeout(() => { try { wc.reload(); } catch {} }, 500);
-        }
-      });
-    });
-
-    wc.on('before-input-event', (e, input) => {
-      if (input.type !== 'keyDown') return;
-      if (handleLocalHotkey(input, e)) return;
-      if (input.control && input.key.toLowerCase() === 'f') { win?.webContents.send('find-open'); e.preventDefault(); return; }
-      if (input.control && input.key.toLowerCase() === 'tab') { win?.webContents.send('tabs-cycle', input.shift ? -1 : 1); e.preventDefault(); return; }
-      if (input.key === 'F5') { wc.reload(); e.preventDefault(); }
-      else if (input.control && input.key.toLowerCase() === 'r') { wc.reload(); e.preventDefault(); }
-      else if (input.control && (input.key === '+' || input.key === '=')) {
-        const z = Math.min(3, wc.getZoomFactor() + 0.1);
-        wc.setZoomFactor(z);
-        e.preventDefault();
-      }
-      else if (input.control && (input.key === '-' || input.key === '_')) {
-        const z = Math.max(0.5, wc.getZoomFactor() - 0.1);
-        wc.setZoomFactor(z);
-        e.preventDefault();
-      }
-      else if (input.control && input.key === '0') {
-        wc.setZoomFactor(1);
-        e.preventDefault();
-      }
-      else if (input.key === 'F12') { try { if (wc.isDevToolsOpened()) wc.closeDevTools(); else wc.openDevTools({ mode: 'detach', activate: true }); } catch { try { wc.toggleDevTools(); } catch {} } e.preventDefault(); }
-      else if (input.alt && input.key === 'ArrowLeft') { wc.goBack(); e.preventDefault(); }
-      else if (input.alt && input.key === 'ArrowRight') { wc.goForward(); e.preventDefault(); }
-    });
-  });
-}
-
-function getGuestFrames() {
-  const guest = siteWc;
-  if (!guest || guest.isDestroyed()) return [];
-  try {
-    return guest.mainFrame.framesInSubtree.filter(frame => frame && !frame.isDestroyed());
-  } catch {
-    return [];
+    return nativeImage.createFromBuffer(buf, { width: size, height: size });
   }
+  const play = makeBuffer((x, y) => x > 4 && x < 12 && y > 2 && y < 14 && (x - 4) * 1.5 > Math.abs(y - 8));
+  const pause = makeBuffer((x, y) => (x >= 3 && x <= 6) || (x >= 10 && x <= 13));
+  const next = makeBuffer((x, y) => (x >= 10 && x <= 13) || (x > 2 && x < 10 && y > 2 && y < 14 && (x - 2) * 1.5 > Math.abs(y - 8)));
+  const prev = makeBuffer((x, y) => (x >= 3 && x <= 6) || (x > 6 && x < 14 && y > 2 && y < 14 && (14 - x) * 1.5 > Math.abs(y - 8)));
+  thumbarIcons = { play, pause, next, prev };
+  return thumbarIcons;
 }
 
-async function executeGuest(script, userGesture = false) {
-  const frames = getGuestFrames();
-  if (!frames.length) return null;
-  const results = await Promise.all(frames.map(frame => {
-    try { return frame.executeJavaScript(script, userGesture).catch(() => null); } catch { return null; }
-  }));
-  return results.find(result => result !== null && result !== undefined) ?? null;
-}
-
-async function applyVolumeToGuest() {
-  const state = volumeState;
-  const script = `(() => {
-    const videos = Array.from(document.querySelectorAll('video'));
-    if (!videos.length) return false;
-    const level = ${state.volume};
-    const muted = ${!!state.muted};
-    window.__animeonVolume = level;
-    for (const video of videos) {
-      try {
-        if (!video.__animeonGainContext) {
-          const Ctx = window.AudioContext || window.webkitAudioContext;
-          if (!Ctx) throw new Error('audio');
-          const ctx = new Ctx();
-          const source = ctx.createMediaElementSource(video);
-          const gain = ctx.createGain();
-          source.connect(gain);
-          gain.connect(ctx.destination);
-          video.__animeonGainContext = ctx;
-          video.__animeonGainNode = gain;
-        }
-        if (video.__animeonGainContext.state === 'suspended') video.__animeonGainContext.resume().catch(() => {});
-        video.volume = level <= 100 ? level / 100 : 1;
-        video.__animeonGainNode.gain.value = level > 100 ? level / 100 : 1;
-        video.muted = muted;
-      } catch {
-        video.volume = Math.min(1, level / 100);
-        video.muted = muted;
-      }
-    }
-    return true;
-  })()`;
-  await executeGuest(script, true);
-}
-
-async function setVolume(delta) {
-  const change = Number(delta) || 0;
-  volumeState.volume = Math.max(0, Math.min(200, volumeState.volume + change));
-  await applyVolumeToGuest();
-  return volumeState;
-}
-
-async function setMuted(value) {
-  volumeState.muted = value === null ? !volumeState.muted : !!value;
-  await applyVolumeToGuest();
-  return volumeState;
-}
-
-async function applyPlaybackPreferences() {
-  const speed = Number(config.playbackSpeed) || 1;
-  const resumeUrl = String(siteWc?.getURL?.() || '');
-  const saved = resumeUrl && config.playbackPositions ? config.playbackPositions[resumeUrl] : null;
-  const resume = config.resumeEnabled !== false && saved && Number(saved.time) > 3 ? Number(saved.time) : 0;
-  if (resumeUrl && resumeUrl !== lastResumeUrl) lastResumeUrl = resumeUrl;
-  await executeGuest(`(() => {
-    const videos = Array.from(document.querySelectorAll('video'));
-    if (!videos.length) return false;
-    const active = videos.find(v => !v.paused && !v.ended) || videos[0];
-    for (const video of videos) video.playbackRate = ${speed};
-    if (${resume > 0 ? 'true' : 'false'} && active.readyState >= 1 && Math.abs(active.currentTime - ${resume}) > 2) active.currentTime = Math.max(0, Math.min(Number.isFinite(active.duration) ? active.duration - 0.5 : ${resume}, ${resume}));
-    return true;
-  })()`, true);
-}
-
-function setPlaybackSpeed(value) {
-  const allowed = [0.25,0.5,0.75,1,1.25,1.5,1.75,2];
-  const speed = allowed.includes(Number(value)) ? Number(value) : 1;
-  config.playbackSpeed = speed;
-  saveConfig();
-  return executeGuest(`(() => { const videos = Array.from(document.querySelectorAll('video')); for (const video of videos) video.playbackRate = ${speed}; return videos.length > 0; })()`).then(() => speed);
-}
-
-function getMediaState() {
-  return executeGuest(`(() => {
-    const videos = Array.from(document.querySelectorAll('video'));
-    if (!videos.length) return null;
-    const active = videos.find(v => !v.paused && !v.ended) || videos.find(v => v.readyState >= 2) || videos[0];
-    const title = document.title || '';
-    return { currentTime: Number(active.currentTime || 0), duration: Number.isFinite(active.duration) ? active.duration : 0, paused: !!active.paused, ended: !!active.ended, rate: Number(active.playbackRate || 1), title, src: active.currentSrc || active.src || '' };
-  })()`);
-}
-
-async function pollMediaState() {
-  if (!win || win.isDestroyed() || !siteWc || siteWc.isDestroyed()) return;
+function updateThumbar(state) {
+  if (process.platform !== 'win32' || !win || win.isDestroyed()) return;
   try {
-    const state = await getMediaState();
-    const url = String(siteWc.getURL?.() || '');
-    if (!state) {
-      win.webContents.send('media-state', { available: false, url });
-      return;
-    }
-    const payload = { available: true, url, ...state };
-    win.webContents.send('media-state', payload);
-    updateMediaSession(payload);
-    if (process.platform === 'win32' && tray) tray.setToolTip(payload.title ? `AnimeOn — ${String(payload.title).slice(0, 70)}` : 'AnimeOn');
-    if (config.autoNext && state.ended && url && url !== lastAutoNextUrl) {
-      lastAutoNextUrl = url;
-      setTimeout(() => mediaAction('next'), 350);
-    }
-    if (!state.ended && url !== lastAutoNextUrl) lastAutoNextUrl = '';
-    if (url && /^https:\/\/(?:www\.)?animeon\.(?:cc|co)\//i.test(url) && state.duration > 0 && state.currentTime >= 0) {
-      const now = Date.now();
-      if (now - lastPlaybackPersist >= 5000) {
-        lastPlaybackPersist = now;
-        config.playbackPositions[url] = { time: Math.round(state.currentTime * 10) / 10, duration: Math.round(state.duration * 10) / 10, title: String(state.title || '').slice(0, 180), updatedAt: new Date().toISOString() };
-        const entries = Object.entries(config.playbackPositions).sort((a,b) => String(b[1]?.updatedAt || '').localeCompare(String(a[1]?.updatedAt || ''))).slice(0, 300);
-        config.playbackPositions = Object.fromEntries(entries);
-        saveConfig();
-      }
-    }
+    if (!state?.available) { win.setThumbarButtons([]); return; }
+    const icons = generateThumbarIcons();
+    const isPaused = !!state.paused;
+    win.setThumbarButtons([
+      { icon: icons.prev, tooltip: 'Предыдущая', flags: ['enabled'], click: () => mediaAction('previous') },
+      { icon: isPaused ? icons.play : icons.pause, tooltip: isPaused ? 'Играть' : 'Пауза', flags: ['enabled'], click: () => mediaAction('playpause') },
+      { icon: icons.next, tooltip: 'Следующая', flags: ['enabled'], click: () => mediaAction('next') },
+    ]);
   } catch {}
-}
-
-function startMediaPolling() {
-  if (mediaPollTimer) clearInterval(mediaPollTimer);
-  mediaPollTimer = setInterval(() => pollMediaState(), 1000);
-}
-
-function togglePictureInPicture() {
-  return executeGuest(`(async () => {
-    const videos = Array.from(document.querySelectorAll('video'));
-    if (!videos.length) return { ok:false, reason:'no-video' };
-    if (document.pictureInPictureElement) { await document.exitPictureInPicture(); return { ok:true, active:false }; }
-    const active = videos.find(v => !v.paused && !v.ended) || videos[0];
-    if (!active.requestPictureInPicture) return { ok:false, reason:'unsupported' };
-    await active.requestPictureInPicture();
-    return { ok:true, active:true };
-  })()`, true);
-}
-
-async function inspectPlaybackOptions() {
-  const result = await executeGuest(`(() => {
-    const normalize = value => String(value || '').replace(/\\s+/g, ' ').trim();
-    const textOf = el => normalize(el?.innerText || el?.textContent || el?.getAttribute('aria-label') || el?.title || '');
-    const selectors = 'button,a,[role="button"],option';
-    const nodes = Array.from(document.querySelectorAll(selectors));
-    const qualityRx = /(?:2160|1440|1080|720|576|480|360)p?|4k|ultra|full hd|hd/i;
-    const dubRx = /озвуч|дубляж|voice|dub|anilibria|anidub|dream ?cast|shiza|jam|studio band|студийн/i;
-    const quality = [...new Set(nodes.map(textOf).filter(x => qualityRx.test(x)).slice(0, 40))];
-    const dubbing = [...new Set(nodes.map(textOf).filter(x => dubRx.test(x)).slice(0, 60))];
-    const sources = [...new Set(nodes.map(textOf).filter(x => /источник|source|плеер|player|kodik|alloha|sibnet|lumex|collaps|cdn/i.test(x)).slice(0, 40))];
-    return { quality, dubbing, sources, url: location.href, title: document.title };
-  })()`);
-  return result || { quality: [], dubbing: [], sources: [] };
-}
-
-async function selectPlaybackOption(kind, value) {
-  const target = String(value || '').trim();
-  if (!target || !['quality', 'dubbing', 'source'].includes(kind)) return { ok: false, reason: 'invalid' };
-  const result = await executeGuest(`(() => {
-    const target = ${JSON.stringify(target)};
-    const kind = ${JSON.stringify(kind)};
-    const normalize = value => String(value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
-    const needle = normalize(target);
-    const nodes = Array.from(document.querySelectorAll('button,a,[role="button"],option'));
-    const el = nodes.find(node => normalize(node.innerText || node.textContent || node.getAttribute('aria-label') || node.title).includes(needle));
-    if (!el) return { ok:false, reason:'not-found', kind, value:target };
-    try { el.click(); } catch {}
-    return { ok:true, kind, value:target };
-  })()`, true);
-  return result || { ok: false, reason: 'not-found' };
-}
-
-async function smartSelectPlayback(preferences = {}) {
-  const options = await inspectPlaybackOptions();
-  const prefs = {
-    dubbing: Array.isArray(preferences.dubbing) ? preferences.dubbing : [],
-    quality: Array.isArray(preferences.quality) ? preferences.quality : [],
-    source: Array.isArray(preferences.source) ? preferences.source : [],
-  };
-  const choose = async (kind, available, preferred) => {
-    for (const pref of preferred) {
-      const exact = available.find(item => String(item).toLowerCase() === String(pref).toLowerCase());
-      const partial = available.find(item => String(item).toLowerCase().includes(String(pref).toLowerCase()));
-      const selected = exact || partial;
-      if (selected) return selectPlaybackOption(kind, selected);
-    }
-    return { ok:false, reason:'no-preference-match' };
-  };
-  const dubbing = await choose('dubbing', options.dubbing, prefs.dubbing);
-  const quality = await choose('quality', options.quality, prefs.quality);
-  const source = await choose('source', options.sources, prefs.source);
-  return { ok: dubbing.ok || quality.ok || source.ok, options, selected: { dubbing, quality, source } };
-}
-
-async function smartFallback(preferences = {}) {
-  const attempts = [];
-  const sourcePrefs = Array.isArray(preferences.source) ? preferences.source : [];
-  const options = await inspectPlaybackOptions();
-  const candidates = [...sourcePrefs, ...options.sources].filter(Boolean);
-  for (const candidate of [...new Set(candidates)]) {
-    const result = await selectPlaybackOption('source', candidate);
-    attempts.push({ candidate, ok: !!result?.ok });
-    if (result?.ok) return { ok:true, selected:candidate, attempts, options };
-  }
-  return { ok:false, attempts, options };
-}
-
-function seekVideo(seconds) {
-  return executeGuest(`(() => { const v = Array.from(document.querySelectorAll('video')); if (!v.length) return false; const active = v.find(x => !x.paused && !x.ended) || v[0]; active.currentTime = Math.max(0, Math.min(Number.isFinite(active.duration) ? active.duration : active.currentTime + ${Number(seconds)}, active.currentTime + ${Number(seconds)})); return true; })()`);
-}
-
-function mediaAction(action) {
-  if (action === 'playpause') return togglePlayback();
-  if (action === 'next') return executeGuest(`(() => { const selectors = ['[aria-label*=\"next\" i]','[title*=\"next\" i]','button[class*=\"next\" i]','a[class*=\"next\" i]']; const el = selectors.map(s => document.querySelector(s)).find(Boolean); if (el) { el.click(); return true; } const text = Array.from(document.querySelectorAll('button,a')).find(x => /следующ|next/i.test(x.innerText || x.getAttribute('aria-label') || x.title || '')); if (text) { text.click(); return true; } return false; })()`);
-  if (action === 'previous') return executeGuest(`(() => { const selectors = ['[aria-label*=\"previous\" i]','[aria-label*=\"prev\" i]','[title*=\"previous\" i]','[title*=\"prev\" i]','button[class*=\"prev\" i]','a[class*=\"prev\" i]']; const el = selectors.map(s => document.querySelector(s)).find(Boolean); if (el) { el.click(); return true; } const text = Array.from(document.querySelectorAll('button,a')).find(x => /предыдущ|previous|prev/i.test(x.innerText || x.getAttribute('aria-label') || x.title || '')); if (text) { text.click(); return true; } return false; })()`);
-}
-
-function takeScreenshot() {
-  if (!win || win.isDestroyed()) return;
-  ensureScreenshotsDir();
-  (async () => {
-    try {
-      const image = await win.capturePage();
-      const url=String(siteWc?.getURL?.()||'');
-      let title='AnimeOn';
-      try { title=await siteWc?.executeJavaScript('document.title||\"AnimeOn\"',false) || title; } catch {}
-      const filePath = path.join(screenshotsDir, `${sanitizeName(pageLabel(url,title))}-${formatTimestamp()}.png`);
-      fs.writeFileSync(filePath, image.toPNG());
-      win.webContents.send('toast', { message: `Скриншот сохранён: ${path.basename(filePath)}` });
-      win.webContents.send('screenshots:changed');
-    } catch (e) { writeLog('error','Screenshot failed',{error:String(e?.message||e)}); }
-  })();
 }
 
 function toggleAlwaysOnTop() {
@@ -955,25 +642,6 @@ function toggleAlwaysOnTop() {
   win.setAlwaysOnTop(config.alwaysOnTop);
   saveConfig();
   win.webContents.send('always-on-top', config.alwaysOnTop);
-}
-
-function togglePlayback() {
-  const guest = siteWc;
-  if (!guest || guest.isDestroyed()) return;
-  try {
-    guest.executeJavaScript(`(() => {
-        const videos = Array.from(document.querySelectorAll('video'));
-        if (!videos.length) return false;
-        const active = videos.find(v => !v.paused && !v.ended) || videos[0];
-        if (active.paused || active.ended) {
-          const p = active.play();
-          if (p?.catch) p.catch(() => {});
-        } else {
-          active.pause();
-        }
-        return true;
-      })()`, false).catch(() => {});
-  } catch {} 
 }
 
 function toggleTrayWindow() {
@@ -996,7 +664,7 @@ function acceleratorFromInput(input) {
   if (input.control) parts.push('Control');
   if (input.alt) parts.push('Alt');
   if (input.shift) parts.push('Shift');
-  if (input.meta) parts.push('Command');
+  if (input.meta) parts.push('Super');
   const keyMap = {
     ' ': 'Space', Escape: 'Esc', ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right',
     PageUp: 'PageUp', PageDown: 'PageDown', Enter: 'Enter', Tab: 'Tab', Backspace: 'Backspace', Delete: 'Delete',
@@ -1007,6 +675,11 @@ function acceleratorFromInput(input) {
   if (key.length === 1) key = key.toUpperCase();
   if (['Control', 'Alt', 'Shift', 'Meta'].includes(key)) return '';
   return [...parts, key].join('+');
+}
+
+function normalizeHotkeyAccelerator(value) {
+  return String(value || '').trim().split('+').map((part) =>
+    /^command$/i.test(part.trim()) ? 'Super' : part.trim()).join('+');
 }
 
 function localHotkeyActions() {
@@ -1046,8 +719,12 @@ function handleLocalHotkey(input, event) {
   const actions = localHotkeyActions();
   const normalized = combo.toLowerCase();
   for (const [key, action] of Object.entries(actions)) {
-    const accelerator = String(keys[key] || '').trim();
+    const accelerator = normalizeHotkeyAccelerator(keys[key]);
     if (!accelerator || accelerator.toLowerCase() !== normalized) continue;
+    if (registeredHotkeyAccelerators.has(normalized)) {
+      if (event) event.preventDefault();
+      return true;
+    }
     try { action(); } catch (error) { console.error(`[AnimeOn] Hotkey ${key} failed:`, error); }
     if (event) event.preventDefault();
     return true;
@@ -1057,21 +734,39 @@ function handleLocalHotkey(input, event) {
 
 function registerGlobalHotkeys() {
   globalShortcut.unregisterAll();
+  registeredHotkeyAccelerators.clear();
   const registered = [];
   const failed = [];
-  for (const [accelerator, action] of [
-    ['MediaPlayPause', () => mediaAction('playpause')],
-    ['MediaNextTrack', () => mediaAction('next')],
-    ['MediaPreviousTrack', () => mediaAction('previous')],
-  ]) {
+  const shortcuts = [
+    ['MediaPlayPause', 'MediaPlayPause', () => mediaAction('playpause')],
+    ['MediaNextTrack', 'MediaNextTrack', () => mediaAction('next')],
+    ['MediaPreviousTrack', 'MediaPreviousTrack', () => mediaAction('previous')],
+  ];
+  const actions = localHotkeyActions();
+  const bindings = config.hotkeys && typeof config.hotkeys === 'object' ? config.hotkeys : {};
+  const accelerators = new Set(shortcuts.map(([, accelerator]) => accelerator.toLowerCase()));
+  for (const [key, action] of Object.entries(actions)) {
+    const accelerator = normalizeHotkeyAccelerator(bindings[key]);
+    if (!accelerator) continue;
+    const normalized = accelerator.toLowerCase();
+    if (accelerators.has(normalized)) {
+      failed.push({ key, accelerator, reason: 'duplicate' });
+      continue;
+    }
+    accelerators.add(normalized);
+    shortcuts.push([key, accelerator, action]);
+  }
+  for (const [key, accelerator, action] of shortcuts) {
     try {
-      if (globalShortcut.register(accelerator, action)) registered.push({ key: accelerator, accelerator });
-      else failed.push({ key: accelerator, accelerator, reason: 'unavailable' });
+      if (globalShortcut.register(accelerator, action)) {
+        registered.push({ key, accelerator });
+        if (actions[key]) registeredHotkeyAccelerators.add(accelerator.toLowerCase());
+      } else failed.push({ key, accelerator, reason: 'unavailable' });
     } catch (error) {
-      failed.push({ key: accelerator, accelerator, reason: String(error?.message || error) });
+      failed.push({ key, accelerator, reason: String(error?.message || error) });
     }
   }
-  return { registered, failed, mode: 'local' };
+  return { registered, failed, mode: 'global' };
 }
 
 function showMainWindow() {
@@ -1082,13 +777,6 @@ function showMainWindow() {
 }
 
 function ensureTray() {
-  if (!config.tray) {
-    if (tray) {
-      tray.destroy();
-      tray = null;
-    }
-    return;
-  }
   if (tray) return;
   tray = new Tray(path.join(__dirname, '../assets', 'logo.png'));
   tray.setToolTip('AnimeOn');
@@ -1123,7 +811,7 @@ function toggleTrayMenu() {
     trayMenuWin.hide();
     return;
   }
-  const [w, h] = [220, 166];
+  const [w, h] = [220, 158];
   const cursor = screen.getCursorScreenPoint();
   const trayBounds = tray && !tray.isDestroyed() ? tray.getBounds() : null;
   const anchor = trayBounds && trayBounds.width > 0 && trayBounds.height > 0
@@ -1191,33 +879,40 @@ ipcMain.on('tray-action', (_, action) => {
 });
 
 ipcMain.on('cfg:get', (e) => {
+  if (!isTrustedAppEvent(e)) { e.returnValue = null; return; }
   e.returnValue = config;
 });
 
-ipcMain.on('cfg:set', (_, patch) => {
-  Object.assign(config, patch);
+ipcMain.on('cfg:set', (event, patch) => {
+  if (!isTrustedAppEvent(event) || !patch || typeof patch !== 'object' || Array.isArray(patch)) return;
+  const safePatch = { ...patch };
+  delete safePatch.accessKeyEnabled;
+  Object.assign(config, safePatch);
   saveConfig();
-  applySideEffects(patch);
+  applySideEffects(safePatch);
 });
 
-ipcMain.handle('library:get', () => ({ library: config.library }));
-ipcMain.handle('library:set', (_, library) => {
-  if (!library || typeof library !== 'object') return { ok: false };
-  for (const key of ['favorites','continueWatching','localHistory']) {
-    if (Array.isArray(library[key])) config.library[key] = library[key].slice(0, 500);
+accessKeyManager.registerIpc();
+
+ipcMain.handle('discord:settings:set', (_, patch) => {
+  if (!patch || typeof patch !== 'object') return { ok: false, error: 'invalid settings' };
+  config.discordRpc = { ...DEFAULT_DISCORD_RPC_SETTINGS, ...config.discordRpc };
+  for (const key of Object.keys(DEFAULT_DISCORD_RPC_SETTINGS)) {
+    if (typeof patch[key] === 'boolean') config.discordRpc[key] = patch[key];
   }
   saveConfig();
-  return { ok: true, library: config.library };
-});
-ipcMain.handle('library:clear-history', () => {
-  config.library.localHistory = [];
-  config.library.continueWatching = [];
-  saveConfig();
-  return { ok: true };
+  applyDiscordRpcRuntime();
+  return { ok: true, settings: config.discordRpc };
 });
 
-ipcMain.on('open-external', (_, url) => {
-  if (/^(https?|tg):\/\//i.test(url) || /^tg:/i.test(url)) shell.openExternal(url);
+settingsIpc.registerIpc();
+
+ipcMain.on('open-external', (event, value) => {
+  if (!isTrustedAppEvent(event)) return;
+  try {
+    const url = new URL(String(value || ''));
+    if (url.protocol === 'https:' || url.protocol === 'http:' || url.protocol === 'tg:') shell.openExternal(url.href);
+  } catch {}
 });
 
 ipcMain.on('app:open-data-folder', () => { shell.openPath(app.getPath('userData')).catch(() => {}); });
@@ -1236,6 +931,7 @@ ipcMain.on('notify', (_, { title, body }) => {
   n.show();
 });
 
+ipcMain.on('win:minimize', () => win?.minimize());
 ipcMain.on('win:maximize-toggle', () => {
   if (!win) return;
   win.isMaximized() ? win.unmaximize() : win.maximize();
@@ -1246,165 +942,7 @@ ipcMain.on('win:fullscreen', () => {
   win.setFullScreen(!win.isFullScreen());
 });
 
-ipcMain.handle('app:diagnostics', async () => {
-  const wc = win?.webContents;
-  let webviewMemoryMB = 0;
-  try {
-    const pid = wc?.getOSProcessId?.();
-    const metric = pid ? app.getAppMetrics().find(m => m.pid === pid) : null;
-    webviewMemoryMB = metric?.memory?.workingSetSize ? Math.round(metric.memory.workingSetSize / 1024) : 0;
-  } catch {}
-  return {
-    version: app.getVersion(),
-    api: { baseUrl: API_BASE, clientVersion: API_VERSION },
-    electron: process.versions.electron,
-    chrome: process.versions.chrome,
-    node: process.versions.node,
-    platform: process.platform,
-    arch: process.arch,
-    memoryMB: Math.round(process.memoryUsage().rss / 1048576),
-    webviewMemoryMB,
-    gpu: app.getGPUFeatureStatus ? app.getGPUFeatureStatus() : {},
-    visible: !!win?.isVisible(),
-    maximized: !!win?.isMaximized(),
-    fullscreen: !!win?.isFullScreen(),
-  };
-});
-
-ipcMain.handle('app:clear-site-data', async () => {
-  try {
-    await session.defaultSession.clearStorageData({
-      storages: ['appcache', 'cookies', 'filesystem', 'indexdb', 'localstorage', 'serviceworkers', 'websql', 'shadercache', 'cachestorage'],
-    });
-    return { ok: true };
-  } catch (e) { return { ok: false, error: String(e?.message || e) }; }
-});
-
-const EXPORT_KEYS = ['theme','custom','site','siteList','remember','notify','autostart','tray','compact','confirmClose','autoRecovery','performance','lowPower','autoHide','closeBehavior','alwaysOnTop','hotkeys','customCss','smoothSite','visual','profiles','lastUrl','history','favorites','api','playbackPositions','playbackSpeed','library','resumeEnabled','autoNext','recentPages','pageFavorites','tabs','activeTab','tabsFixedV2','doNotDisturb','sleepTimer','autoCacheCleanup','cacheLimitMB','errorLog','memorySaver','startupPolicyFixed'];
-
-ipcMain.handle('settings:export', async () => {
-  try {
-    const { canceled, filePath } = await dialog.showSaveDialog(win, {
-      title: 'Экспорт настроек AnimeOn',
-      defaultPath: 'AnimeOn-settings.json',
-      filters: [{ name: 'JSON', extensions: ['json'] }],
-    });
-    if (canceled || !filePath) return { ok: false, canceled: true };
-    const data = { app: 'AnimeOn Desktop', version: app.getVersion(), exportedAt: new Date().toISOString(), settings: Object.fromEntries(EXPORT_KEYS.map(k => [k, config[k]])) };
-    fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf8');
-    return { ok: true, filePath };
-  } catch (e) { return { ok: false, error: String(e?.message || e) }; }
-});
-
-ipcMain.handle('settings:import', async () => {
-  try {
-    const { canceled, filePaths } = await dialog.showOpenDialog(win, {
-      title: 'Импорт настроек AnimeOn',
-      properties: ['openFile'],
-      filters: [{ name: 'JSON', extensions: ['json'] }],
-    });
-    if (canceled || !filePaths?.[0]) return { ok: false, canceled: true };
-    const raw = JSON.parse(fs.readFileSync(filePaths[0], 'utf8'));
-    const incoming = raw?.settings && typeof raw.settings === 'object' ? raw.settings : raw;
-    const patch = {};
-    for (const k of EXPORT_KEYS) if (Object.prototype.hasOwnProperty.call(incoming, k)) patch[k] = incoming[k];
-    if (patch.theme && !['violet','blue','cyan','sky','indigo','emerald','green','lime','yellow','amber','orange','red','rose','pink','fuchsia','slate','gray','teal','mint','gold','coral','lavender','crimson','electric','custom'].includes(patch.theme)) delete patch.theme;
-    if (patch.site && !['cc','co'].includes(patch.site)) delete patch.site;
-    if (patch.performance && !['performance','balanced','economy'].includes(patch.performance)) delete patch.performance;
-    if (patch.closeBehavior && !['exit','tray','ask'].includes(patch.closeBehavior)) delete patch.closeBehavior;
-    for (const k of ['remember','autostart','tray','compact','confirmClose','autoRecovery','lowPower','autoHide']) if (k in patch) patch[k] = !!patch[k] || patch[k] === '1';
-    Object.assign(config, patch); saveConfig(); applySideEffects(patch);
-    return { ok: true, settings: Object.fromEntries(EXPORT_KEYS.map(k => [k, config[k]])) };
-  } catch (e) { return { ok: false, error: 'Не удалось импортировать файл: ' + String(e?.message || e) }; }
-});
-
-ipcMain.handle('settings:reset', async () => {
-  try {
-    const defaults = { theme:'violet', custom:'#8b5cf6', site:'co', remember:'0', notify:false, autostart:false, tray:false, compact:false, confirmClose:false, autoRecovery:true, performance:'balanced', lowPower:false, autoHide:true, closeBehavior:'ask', alwaysOnTop:false, resumeEnabled:true, autoNext:false, hotkeys:{}, customCss:{cc:'',co:''}, siteList:[{id:'one',url:'https://animeon.cc/',label:'animeon.cc'},{id:'two',url:'https://v1.animeon.co/',label:'v1.animeon.co'}], smoothSite:true, visual:{radius:18,opacity:96,blur:0,scale:100,density:100,accentGlow:55,animations:'smooth'}, profiles:{} };
-    Object.assign(config, defaults); saveConfig(); applySideEffects({ autostart:true, tray:true });
-    return { ok: true, settings: config };
-  } catch (e) { return { ok:false, error:String(e?.message || e) }; }
-});
-
-ipcMain.handle('pages:recent', () => ({ ok:true, items:config.recentPages||[] }));
-ipcMain.handle('pages:recent-add', (_, item) => {
-  const url=normalizePageUrl(item?.url);
-  if(!url) return {ok:false};
-  rememberRecentPage(url, String(item?.title||''));
-  return {ok:true,items:config.recentPages||[]};
-});
-
-ipcMain.handle('pages:favorites', () => ({ ok:true, items:config.pageFavorites||[] }));
-ipcMain.handle('pages:favorite-toggle', (_, item) => {
-  const url=String(item?.url||'');
-  let valid=false;
-  try { const u=new URL(url); valid=(u.protocol==='http:'||u.protocol==='https:') && /(^|\.)animeon\.(cc|co)$/i.test(u.hostname); } catch {}
-  if(!valid) return {ok:false,error:'bad url'};
-  const idx=(config.pageFavorites||[]).findIndex(x=>(typeof x==='string'?x:x?.url)===url);
-  if(idx>=0) config.pageFavorites.splice(idx,1); else config.pageFavorites.unshift({url,title:pageLabel(url,item?.title||'')});
-  config.pageFavorites=config.pageFavorites.slice(0,100); saveConfig(); return {ok:true,favorite:idx<0,items:config.pageFavorites};
-});
-ipcMain.handle('tabs:get',()=>({ok:true,tabs:config.tabs||[],activeTab:config.activeTab||0}));
-ipcMain.handle('tabs:set',(_,tabs,active=0)=>{ config.tabs=Array.isArray(tabs)?tabs.slice(0,12):[]; config.activeTab=Math.max(0,Math.min(Math.max(0,config.tabs.length-1),Number(active)||0)); saveConfig(); return {ok:true,tabs:config.tabs,activeTab:config.activeTab}; });
-ipcMain.handle('find:start',(_,text)=>{ if(!siteWc||siteWc.isDestroyed()) return {ok:false}; const t=String(text||''); if(!t){try{siteWc.stopFindInPage('clearSelection')}catch{} return {ok:true};} return {ok:true,id:siteWc.findInPage(t,{findNext:false,matchCase:false})}; });
-ipcMain.handle('find:stop',()=>{try{siteWc?.stopFindInPage('clearSelection');}catch{} return {ok:true};});
-ipcMain.handle('sleep:set',(_,minutes,action)=>setSleepTimer(minutes,action));
-ipcMain.handle('sleep:get',()=>config.sleepTimer);
-ipcMain.handle('logs:get',()=>{ try { const text=fs.existsSync(logPath)?fs.readFileSync(logPath,'utf8'):''; return {ok:true,path:logPath,text:text.slice(-120000)}; } catch(e){return {ok:false,error:String(e?.message||e)}}});
-ipcMain.handle('logs:open',async()=>{try{fs.mkdirSync(path.dirname(logPath),{recursive:true});if(!fs.existsSync(logPath))fs.writeFileSync(logPath,'','utf8');const error=await shell.openPath(logPath);return {ok:!error,path:logPath,error:error||''};}catch(e){return {ok:false,path:logPath,error:String(e?.message||e)}}});
-ipcMain.handle('logs:copy',()=>{try{const text=fs.existsSync(logPath)?fs.readFileSync(logPath,'utf8'):'';clipboard.writeText(text);return {ok:true}}catch(e){return {ok:false,error:String(e?.message||e)}}});
-ipcMain.handle('logs:clear',()=>{try{fs.writeFileSync(logPath,'','utf8');config.errorLog=[];saveConfig();return {ok:true}}catch(e){return {ok:false,error:String(e?.message||e)}}});
-ipcMain.handle('cache:settings',(_,patch)=>{ if(patch&&typeof patch==='object'){if('auto' in patch)config.autoCacheCleanup=!!patch.auto;if('limitMB' in patch)config.cacheLimitMB=Math.max(64,Math.min(16384,Number(patch.limitMB)||512));saveConfig();} return {ok:true,auto:config.autoCacheCleanup,limitMB:config.cacheLimitMB};});
-ipcMain.handle('cache:info',async()=>{try{return {ok:true,size:await session.defaultSession.getCacheSize(),limitMB:Number(config.cacheLimitMB)||512,auto:!!config.autoCacheCleanup}}catch(e){return {ok:false,error:String(e?.message||e)}}});
-ipcMain.handle('memory:saver',(_,enabled)=>{config.memorySaver=!!enabled;saveConfig();try{siteWc?.setBackgroundThrottling(config.memorySaver||config.performance==='economy')}catch{}return {ok:true,enabled:config.memorySaver};});
-
-
-ipcMain.handle('sites:fetch', async () => {
-  try {
-    const res = await fetch('https://raw.githubusercontent.com/Neukluziy/testip/main/ip.txt', { signal: AbortSignal.timeout(10000) });
-    const text = await res.text();
-    const lines = text.split(/\r?\n/).filter(l => l.trim());
-    const sites = [];
-    for (const line of lines) {
-      const m = line.match(/^(\w+)\s*=\s*(.+)$/);
-      if (m) {
-        const label = m[2].trim();
-        sites.push({ id: m[1].trim(), url: `https://${label}/`, label });
-      }
-    }
-    if (sites.length >= 2) {
-      config.siteList = sites;
-      saveConfig();
-    }
-    return { ok: true, sites };
-  } catch (e) {
-    return { ok: false, error: String(e?.message || e), sites: config.siteList || [] };
-  }
-});
-ipcMain.handle('sites:get', () => {
-  return { ok: true, sites: config.siteList || [] };
-});
-
-ipcMain.handle('app:connection-check', async () => {
-  const results = [];
-  const siteList = config.siteList || [
-    { id: 'one', url: 'https://animeon.cc/', label: 'animeon.cc' },
-    { id: 'two', url: 'https://v2.animeon.co/', label: 'v2.animeon.co' }
-  ];
-  for (const site of siteList) {
-    const url = site.url;
-    const started = Date.now();
-    try {
-      const res = await fetch(url, { method: 'HEAD', redirect: 'follow', signal: AbortSignal.timeout(8000), headers: { 'User-Agent': 'AnimeOn-Desktop' } });
-      results.push({ url, ok: res.ok || res.status < 500, status: res.status, ms: Date.now()-started });
-    } catch (e) { results.push({ url, ok:false, status:0, ms:Date.now()-started, error:String(e?.message || e) }); }
-  }
-  let api = { ok:false, status:0, ms:0, results:[] };
-  try { api = await apiHealth(); } catch (e) { api = { ok:false, status:0, ms:0, results:[], error:String(e?.message || e) }; }
-  const internet = results.some(r => r.ok) || api.ok;
-  writeLog(internet ? 'info' : 'warn', 'Проверка соединения', { internet, results, api });
-  return { internet, api, results };
-});
+networkManager.registerIpc();
 
 ipcMain.handle('api:health', async () => apiHealth());
 ipcMain.handle('api:get', async (_, path, query) => {
@@ -1539,157 +1077,19 @@ ipcMain.on('app:set-performance', (_, mode) => {
   if (win && !win.isDestroyed()) win.webContents.send('performance-mode', config.performance);
 });
 
-const apiCacheDir = path.join(app.getPath('userData'), 'api-cache');
-function ensureApiCacheDir() { try { fs.mkdirSync(apiCacheDir, { recursive: true }); } catch {} }
-function getApiCacheSize() {
-  ensureApiCacheDir();
-  let bytes = 0;
-  try { for (const f of fs.readdirSync(apiCacheDir)) { try { bytes += fs.statSync(path.join(apiCacheDir, f)).size; } catch {} } } catch {}
-  return bytes;
-}
-ipcMain.handle('system:cache-info', async () => {
-  let sessionCache = 0;
-  try { sessionCache = await session.defaultSession.getCacheSize(); } catch {}
-  return { ok: true, apiCacheMB: Math.round(getApiCacheSize() / 1048576 * 10) / 10, sessionCacheMB: Math.round(sessionCache / 1048576 * 10) / 10, screenshots: fs.existsSync(screenshotsDir) ? fs.readdirSync(screenshotsDir).filter(x => /\.png$/i.test(x)).length : 0 };
-});
-ipcMain.handle('system:clear-api-cache', async () => {
-  try { ensureApiCacheDir(); for (const f of fs.readdirSync(apiCacheDir)) { try { fs.unlinkSync(path.join(apiCacheDir, f)); } catch {} } return { ok:true }; } catch (e) { return { ok:false, error:String(e?.message || e) }; }
-});
-ipcMain.handle('system:status', async () => {
-  const metrics = app.getAppMetrics();
-  const memory = Math.round(process.memoryUsage().rss / 1048576);
-  const sitePid = siteWc && !siteWc.isDestroyed() ? siteWc.getProcessId() : 0;
-  const siteMetric = metrics.find(x => x.pid === sitePid);
-  let api = null;
-  try { api = await apiHealth(); } catch {}
-  return { ok:true, uptime: Math.round(process.uptime()), memoryMB:memory, siteMemoryMB:siteMetric ? Math.round(siteMetric.memory.workingSetSize / 1024) : 0, api, gpu: app.getGPUFeatureStatus ? app.getGPUFeatureStatus() : {}, cache: { apiCacheMB: Math.round(getApiCacheSize() / 1048576 * 10) / 10 }, performance: config.performance, autoRecovery: config.autoRecovery !== false };
-});
-ipcMain.handle('profiles:get', () => ({ ok:true, profiles: config.profiles || {} }));
-ipcMain.handle('profiles:save', (_, name, data) => {
-  const key = String(name || '').trim().slice(0, 40);
-  if (!key) return { ok:false, error:'Пустое имя профиля' };
-  if (!config.profiles || typeof config.profiles !== 'object') config.profiles = {};
-  config.profiles[key] = { ...(data && typeof data === 'object' ? data : {}), updatedAt: Date.now() };
-  saveConfig();
-  return { ok:true, profiles:config.profiles };
-});
-ipcMain.handle('profiles:delete', (_, name) => {
-  const key = String(name || '');
-  if (config.profiles && Object.prototype.hasOwnProperty.call(config.profiles, key)) delete config.profiles[key];
-  saveConfig();
-  return { ok:true, profiles:config.profiles || {} };
-});
-ipcMain.handle('profiles:load', (_, name) => ({ ok:!!config.profiles?.[String(name || '')], profile:config.profiles?.[String(name || '')] || null }));
-
-ipcMain.handle('site:memory', async () => {
-  try {
-    const metrics = app.getAppMetrics();
-    const sitePid = siteWc && !siteWc.isDestroyed() ? siteWc.getProcessId() : 0;
-    const site = metrics.find(x => x.pid === sitePid);
-    return { ok:true, appMB:Math.round(process.memoryUsage().rss / 1048576), siteMB:site ? Math.round(site.memory.workingSetSize / 1024) : 0, pid:sitePid, performance:config.performance };
-  } catch (e) { return { ok:false, error:String(e?.message || e) }; }
-});
-
+watchLibrary.registerIpc();
 ipcMain.on('site:navigate', (_, url) => {
   if (!siteWc || siteWc.isDestroyed() || !SITE_RE.test(String(url))) return;
   try { siteWc.loadURL(String(url)); } catch {}
 });
 
-ipcMain.on('media:volume', (_, delta) => setVolume(Number(delta) || 0).then(v => { if (v && win && !win.isDestroyed()) win.webContents.send('media-overlay', { type: 'volume', value: v.volume, muted: v.muted }); }));
-ipcMain.handle('media:volume-state', () => volumeState);
-ipcMain.handle('media:state', async () => { const state = await getMediaState(); return { available: !!state, url: String(siteWc?.getURL?.() || ''), ...(state || {}) }; });
-ipcMain.handle('media:speed', async (_, value) => { try { return { ok:true, speed: await setPlaybackSpeed(value) }; } catch (e) { return { ok:false, error:String(e?.message || e) }; } });
-ipcMain.handle('media:pip', async () => { try { return await togglePictureInPicture(); } catch (e) { return { ok:false, reason:String(e?.message || e) }; } });
-ipcMain.handle('media:options', async () => { try { return await inspectPlaybackOptions(); } catch (e) { return { quality:[], dubbing:[], sources:[], error:String(e?.message || e) }; } });
-ipcMain.handle('media:select-option', async (_, kind, value) => { try { return await selectPlaybackOption(kind, value); } catch (e) { return { ok:false, reason:String(e?.message || e) }; } });
-ipcMain.handle('media:smart-select', async (_, preferences) => { try { return await smartSelectPlayback(preferences || {}); } catch (e) { return { ok:false, error:String(e?.message || e) }; } });
-ipcMain.handle('media:fallback', async (_, preferences) => { try { return await smartFallback(preferences || {}); } catch (e) { return { ok:false, error:String(e?.message || e) }; } });
-ipcMain.on('media:mute', () => setMuted(null).then(v => { if (v && win && !win.isDestroyed()) win.webContents.send('media-overlay', { type: 'volume', value: v.volume, muted: v.muted }); }));
-ipcMain.on('media:seek', (_, seconds) => { const n = Number(seconds) || 0; seekVideo(n).then(ok => { if (ok && win && !win.isDestroyed()) win.webContents.send('media-overlay', { type: 'seek', value: n }); }); });
-ipcMain.on('media:action', (_, action) => mediaAction(action));
+mediaController.registerIpc();
+
+ipcMain.on('app:open-browser', () => {
+  try { if (siteWc && !siteWc.isDestroyed()) shell.openExternal(siteWc.getURL()).catch(() => {}); } catch {}
+});
+
 startMediaPolling();
-ipcMain.on('app:screenshot', takeScreenshot);
-
-ipcMain.handle('screenshots:list', async () => {
-  try {
-    ensureScreenshotsDir();
-    const items = fs.readdirSync(screenshotsDir)
-      .filter((f) => /\.png$/i.test(f))
-      .map((f) => {
-        const full = path.join(screenshotsDir, f);
-        let stat;
-        try { stat = fs.statSync(full); } catch { return null; }
-        return { name: f, path: full, mtimeMs: stat.mtimeMs, size: stat.size };
-      })
-      .filter(Boolean)
-      .sort((a, b) => b.mtimeMs - a.mtimeMs);
-    return { ok: true, dir: screenshotsDir, items };
-  } catch (err) {
-    return { ok: false, error: String(err && err.message || err) };
-  }
-});
-
-ipcMain.handle('screenshots:thumb', async (_, filePath) => {
-  try {
-    if (!isInScreenshotsDir(filePath)) throw new Error('bad path');
-    const img = nativeImage.createFromPath(filePath);
-    if (img.isEmpty()) throw new Error('empty image');
-    const size = img.getSize();
-    const width = Math.min(280, size.width || 280);
-    const thumb = size.width > width ? img.resize({ width }) : img;
-    return { ok: true, dataUrl: thumb.toDataURL() };
-  } catch (err) {
-    return { ok: false, error: String(err && err.message || err) };
-  }
-});
-
-ipcMain.handle('screenshots:open', async (_, filePath) => {
-  try {
-    if (!isInScreenshotsDir(filePath)) throw new Error('bad path');
-    const err = await shell.openPath(filePath);
-    if (err) throw new Error(err);
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, error: String(err && err.message || err) };
-  }
-});
-
-ipcMain.handle('screenshots:show', async (_, filePath) => {
-  try {
-    if (!isInScreenshotsDir(filePath)) throw new Error('bad path');
-    shell.showItemInFolder(filePath);
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, error: String(err && err.message || err) };
-  }
-});
-
-ipcMain.handle('screenshots:copy', async (_, filePath) => {
-  try {
-    if (!isInScreenshotsDir(filePath)) throw new Error('bad path');
-    const img = nativeImage.createFromPath(filePath);
-    if (img.isEmpty()) throw new Error('empty image');
-    clipboard.writeImage(img);
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, error: String(err && err.message || err) };
-  }
-});
-
-ipcMain.handle('screenshots:delete', async (_, filePath) => {
-  try {
-    if (!isInScreenshotsDir(filePath)) throw new Error('bad path');
-    fs.unlinkSync(filePath);
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, error: String(err && err.message || err) };
-  }
-});
-
-ipcMain.on('screenshots:open-folder', () => {
-  ensureScreenshotsDir();
-  shell.openPath(screenshotsDir).catch(() => {});
-});
 ipcMain.on('app:always-on-top', toggleAlwaysOnTop);
 ipcMain.on('app:zoom', (_, delta) => {
   if (!siteWc || siteWc.isDestroyed()) return;
@@ -1725,178 +1125,19 @@ ipcMain.on('app:toggle-devtools', () => {
   } catch {}
 });
 
-const REPO_API = 'https://api.github.com/repos/Neukluziy/animeon-desktop/releases/latest';
-
-
-let lastUpdate = null;
-let updateNotified = false;
-let downloadedInstaller = null;
-let updateWindow = null;
-
-async function checkUpdate() {
-  try {
-    const res = await fetch(REPO_API, { headers: { 'User-Agent': 'AnimeOn-Desktop' }, signal: AbortSignal.timeout(15000) });
-    if (!res.ok) return { ok: false, reason: 'github ' + res.status };
-    const j = await res.json();
-    const latest = String(j.tag_name || j.name || '').replace(/^v/i, '').trim();
-    if (!latest) return { ok: false, reason: 'обновлений пока нет' };
-    const assets = Array.isArray(j.assets) ? j.assets : [];
-    const setup = assets.find((a) => /setup.*\.exe$/i.test(a.name)) || assets.find((a) => /\.exe$/i.test(a.name));
-    const info = {
-      ok: true,
-      latest,
-      current: app.getVersion(),
-      hasUpdate: compareVersions(latest, app.getVersion()) > 0,
-      url: setup ? setup.browser_download_url : j.html_url,
-      notes: String(j.body || '').replace(/\r/g, ''),
-    };
-    if (info.hasUpdate) {
-      lastUpdate = info;
-      if (!updateNotified) {
-        updateNotified = true;
-        showUpdateToast();
-      }
-    }
-    return info;
-  } catch (err) {
-    return { ok: false, reason: String(err && err.message || err) };
-  }
-}
-
-function showUpdateToast() {
-  if (!Notification.isSupported() || !lastUpdate) return;
-  const n = new Notification({
-    title: `Доступна новая версия — v${lastUpdate.latest}`,
-    body: 'Нажми, чтобы посмотреть изменения',
-    icon: path.join(__dirname, '../assets', 'logo.png'),
-    silent: false,
-  });
-  n.on('click', () => openUpdateWindow());
-  n.show();
-}
-
-function openUpdateWindow() {
-  if (!lastUpdate) return;
-  if (updateWindow && !updateWindow.isDestroyed()) {
-    updateWindow.show();
-    updateWindow.focus();
-    return;
-  }
-  updateWindow = new BrowserWindow({
-    width: 520,
-    height: 690,
-    minWidth: 440,
-    minHeight: 560,
-    frame: false,
-    show: false,
-    backgroundColor: '#0f0d14',
-    icon: path.join(__dirname, '../assets', 'logo.ico'),
-    title: 'Обновление AnimeOn',
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-    },
-  });
-  updateWindow.setMenuBarVisibility(false);
-  updateWindow.loadFile(path.join(__dirname, '../windows/update.html'));
-  updateWindow.once('ready-to-show', () => {
-    updateWindow.show();
-    updateWindow.focus();
-  });
-  updateWindow.webContents.on('did-finish-load', () => {
-    updateWindow.webContents.send('upd:data', lastUpdate);
-  });
-  updateWindow.on('closed', () => {
-    updateWindow = null;
-  });
-}
-
-function updProgress(pct, stage, extra = {}) {
-  if (updateWindow && !updateWindow.isDestroyed()) {
-    updateWindow.webContents.send('upd:progress', { pct, stage, ...extra });
-  }
-}
-
-async function downloadUpdate() {
-  if (!lastUpdate || !lastUpdate.url) return { ok: false, error: 'нет данных об обновлении' };
-  try {
-    const dest = path.join(app.getPath('temp'), `AnimeOn-Setup-${lastUpdate.latest}.exe`);
-    updProgress(0, 'download');
-    const res = await fetch(lastUpdate.url, { signal: AbortSignal.timeout(600000) });
-    if (!res.ok || !res.body) throw new Error('HTTP ' + res.status);
-    const total = Number(res.headers.get('content-length')) || 0;
-    const ws = fs.createWriteStream(dest);
-    let received = 0;
-    let lastPct = -1;
-    let lastTime = Date.now();
-    let lastBytes = 0;
-    const reader = res.body.getReader();
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      ws.write(Buffer.from(value));
-      received += value.length;
-      const now = Date.now();
-      if (now - lastTime >= 180) {
-        const speed = Math.max(0, (received - lastBytes) / Math.max(0.18, (now - lastTime) / 1000));
-        const pct = total > 0 ? Math.max(0, Math.min(100, (received / total) * 100)) : null;
-        if (pct === null || Math.floor(pct) !== lastPct) {
-          lastPct = pct === null ? lastPct : Math.floor(pct);
-          updProgress(pct, 'download', { received, total, speed });
-          if (win && !win.isDestroyed()) win.setProgressBar(pct === null ? 0 : Math.max(0, Math.min(1, pct / 100)), { mode: pct === null ? 'indeterminate' : 'normal' }); 
-        }
-        lastTime = now;
-        lastBytes = received;
-      }
-    }
-    await new Promise((r) => ws.end(r));
-    downloadedInstaller = dest;
-    updProgress(100, 'ready', { received, total, speed: 0 });
-    if (win && !win.isDestroyed()) win.setProgressBar(1);
-    setTimeout(() => { if (win && !win.isDestroyed()) win.setProgressBar(-1); }, 900);
-    return { ok: true };
-  } catch (err) {
-    if (win && !win.isDestroyed()) win.setProgressBar(-1);
-    return { ok: false, error: String(err && err.message || err) };
-  }
-}
-
-function applyUpdate() {
-  if (!downloadedInstaller || !fs.existsSync(downloadedInstaller)) return false;
-
-  const portablePath = process.env.PORTABLE_EXECUTABLE_PATH;
-  if (portablePath) {
-    const bat = path.join(app.getPath('temp'), `animeon-update-${Date.now()}.bat`);
-    fs.writeFileSync(bat, [
-      '@echo off',
-      'timeout /t 2 /nobreak >nul',
-      `move /y "${portablePath}" "${portablePath}.old"`,
-      `copy /y "${downloadedInstaller}" "${portablePath}" >nul`,
-      `start "" "${portablePath}"`,
-      `del /q "${portablePath}.old" 2>nul`,
-      `del /q "${bat}" 2>nul`,
-    ].join('\r\n'));
-    spawn('cmd.exe', ['/c', bat], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
-    quitting = true;
-    setTimeout(() => app.exit(0), 300);
-    return true;
-  }
-
-  spawn(downloadedInstaller, ['/S', '--force-run'], { detached: true, stdio: 'ignore' }).unref();
-  quitting = true;
-  setTimeout(() => app.exit(0), 500);
-  return true;
-}
-
-ipcMain.handle('upd:check', () => checkUpdate());
-
-ipcMain.on('upd:open', () => openUpdateWindow());
-ipcMain.on('upd:close', () => {
-  if (updateWindow && !updateWindow.isDestroyed()) updateWindow.close();
+const { checkUpdate } = createUpdateManager({
+  app,
+  BrowserWindow,
+  Notification,
+  ipcMain,
+  config,
+  compareVersions,
+  ensureRollbackDir,
+  getWindow: () => win,
+  isTrustedAppEvent,
+  saveConfig,
+  setQuitting: (value) => { quitting = value; },
 });
-ipcMain.on('upd:install', () => applyUpdate());
-ipcMain.handle('upd:download', () => downloadUpdate());
 
 ipcMain.handle('site:apply-css', async (_, css) => {
   if (!siteWc || siteWc.isDestroyed()) return { ok: false, error: 'страница ещё не загружена' };
@@ -1932,8 +1173,9 @@ ipcMain.on('app:info', (e) => {
   e.returnValue = { version: APP_VERSION, name: 'AnimeOn Desktop', electron: process.versions.electron };
 });
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   registerProtocol();
+  await accessKeyManager.initialize();
   if (!config.startupPolicyFixed) {
     config.autostart = false;
     config.startupPolicyFixed = true;
@@ -1943,19 +1185,92 @@ app.whenReady().then(() => {
   createWindow();
   ensureTray();
 
-  setTimeout(() => {
-    checkUpdate().catch(() => {});
-  }, 1200);
+  const { powerMonitor } = require('electron');
+  powerMonitor.on('suspend', () => { try { if (lastMediaState && !lastMediaState.paused) { togglePlayback(); powerPausedBySystem = true; } } catch {} });
+  powerMonitor.on('lock-screen', () => { try { if (lastMediaState && !lastMediaState.paused) { togglePlayback(); powerPausedBySystem = true; } } catch {} });
+  powerMonitor.on('resume', () => { try { if (powerPausedBySystem) { togglePlayback(); powerPausedBySystem = false; } } catch {} });
+  powerMonitor.on('unlock-screen', () => { try { if (powerPausedBySystem) { togglePlayback(); powerPausedBySystem = false; } } catch {} });
+
+  discordRPC = new DiscordRPC();
+  if (config.discordRpc.enabled) discordRPC.connect().catch(() => {});
+  discordActivityTimer = setInterval(() => updateDiscordActivity(), 15000);
+  updateDiscordActivity();
+
+  const allowedPermissions = new Set(['notifications', 'fullscreen']);
+  const isTrustedSiteContents = (wc) => {
+    try { return SITE_RE.test(wc.getURL()); } catch { return false; }
+  };
+  const configureSitePermissions = (siteSession) => {
+    siteSession.setPermissionRequestHandler((wc, permission, callback) => {
+      callback(isTrustedSiteContents(wc) && allowedPermissions.has(permission));
+    });
+    siteSession.setPermissionCheckHandler((wc, permission) => {
+      return !!wc && isTrustedSiteContents(wc) && allowedPermissions.has(permission);
+    });
+  };
+  configureSitePermissions(session.defaultSession);
+  try { configureSitePermissions(session.fromPartition('persist:animeon')); } catch {}
+
+  process.on('uncaughtException', (e) => writeLog('error', 'uncaughtException', { error: String(e?.stack || e) }));
+  process.on('unhandledRejection', (e) => writeLog('error', 'unhandledRejection', { error: String(e?.stack || e) }));
+
+  setTimeout(() => { checkUpdate().catch(() => {}); networkManager.startMirrorHealthCheck(); }, 1200);
 
   if (process.argv.includes('--settings')) setTimeout(() => win?.webContents.send('open-settings'), 900);
   if (process.argv.includes('--reload')) setTimeout(() => win?.webContents.send('restart-webview'), 1200);
   registerGlobalHotkeys();
   handleStartupDeepLink(process.argv);
+}).catch((error) => {
+  console.error('[AnimeOn] Не удалось безопасно запустить приложение:', error);
+  dialog.showErrorBox('AnimeOn не запущен', `Не удалось проверить защиту доступа и cookies аккаунта.\n\n${String(error?.message || error)}`);
+  app.quit();
 });
+
+function applyDiscordRpcRuntime() {
+  if (!discordRPC) return;
+  const rpc = discordRPC;
+  const revision = ++discordRpcRevision;
+  if (!config.discordRpc?.enabled) {
+    const clear = rpc.ready ? rpc.clearActivity() : Promise.resolve();
+    clear.then(() => {
+      if (discordRPC === rpc && discordRpcRevision === revision && !config.discordRpc?.enabled) rpc.disconnect();
+    }, () => {
+      if (discordRPC === rpc && discordRpcRevision === revision && !config.discordRpc?.enabled) rpc.disconnect();
+    });
+    return;
+  }
+  if (!rpc.ready) rpc.connect().then(() => updateDiscordActivity()).catch(() => {});
+  updateDiscordActivity();
+}
+
+function updateDiscordActivity() {
+  const settings = { ...DEFAULT_DISCORD_RPC_SETTINGS, ...config.discordRpc };
+  if (!discordRPC || !discordRPC.ready || !settings.enabled) return;
+  const state = lastMediaState;
+  if (!state || !state.available) {
+    if (!settings.showWhenIdle) {
+      discordRPC.clearActivity().catch(() => {});
+      return;
+    }
+    const currentUrl = String(siteWc?.getURL?.() || '');
+    const idleUrl = SITE_RE.test(currentUrl) ? currentUrl : (config.siteList?.[config.site === 'co' ? 1 : 0]?.url || 'https://animeon.cc/');
+    let idleText = 'В главном меню';
+    try {
+      const pathname = new URL(idleUrl).pathname;
+      if (/\/anime\//i.test(pathname)) idleText = 'Выбирает серию';
+      else if (pathname !== '/') idleText = 'Просматривает AnimeOn';
+    } catch {}
+    discordRPC.setActivity(buildDiscordActivity({ idle: true, idleText, animeUrl: idleUrl }, settings)).catch(() => {});
+    return;
+  }
+  discordRPC.setActivity(buildDiscordActivity(state, settings)).catch(() => {});
+}
 
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
   saveWindowState();
+  if (discordActivityTimer) clearInterval(discordActivityTimer);
+  if (discordRPC) discordRPC.disconnect();
 });
 
 app.on('before-quit', () => {
