@@ -1,4 +1,4 @@
-const APP_VERSION = '1.4.0';
+const APP_VERSION = require('../package.json').version;
 const SITE_HOSTS = ['animeon.cc', 'animeon.co', 'animeon.gg'];
 const SITE_RE = /^https?:\/\/([a-z0-9-]+\.)*animeon\.(cc|co|gg)(?:\/|$)/i;
 const AUTH_RE = /(accounts\.google|apis\.google|googleusercontent|oauth\.telegram|telegram\.org)/i;
