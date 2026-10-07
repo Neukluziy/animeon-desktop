@@ -8,6 +8,8 @@ class DiscordRPC {
     this.socket = null;
     this.connected = false;
     this.ready = false;
+    this.enabled = true;
+    this.connecting = false;
     this._reqId = 0;
     this._pending = new Map();
     this._buffer = Buffer.alloc(0);
@@ -15,11 +17,15 @@ class DiscordRPC {
   }
 
   connect() {
+    this.enabled = true;
+    if (this.ready || this.socket || this.connecting) return Promise.resolve(this.ready);
+    this.connecting = true;
     const pipes = Array.from({ length: 10 }, (_, i) => `\\\\.\\pipe\\discord-ipc-${i}`);
-    return this._tryConnect(pipes, 0);
+    return this._tryConnect(pipes, 0).finally(() => { this.connecting = false; });
   }
 
   _tryConnect(pipes, index) {
+    if (!this.enabled) return Promise.resolve(false);
     if (index >= pipes.length) {
       this._scheduleReconnect();
       return Promise.resolve(false);
@@ -39,6 +45,7 @@ class DiscordRPC {
       const timeout = setTimeout(() => { try { sock.destroy(); } catch {} done(false); }, 3000);
 
       const sock = net.connect(pipePath, () => {
+        if (!this.enabled) { try { sock.destroy(); } catch {} done(false); return; }
         this.socket = sock;
         this._buffer = Buffer.alloc(0);
         this._bindSocket();
@@ -83,7 +90,7 @@ class DiscordRPC {
     if (op === 1 || op === 2) {
       try {
         const msg = JSON.parse(str);
-        const event = msg.cmd || msg.evt;
+        const event = msg.evt || msg.cmd;
         if (event === 'READY') {
           this.ready = true;
           this.connected = true;
@@ -131,15 +138,18 @@ class DiscordRPC {
     });
   }
 
-  setActivity({ details, state, largeImageKey, largeImageText, smallImageKey, smallImageText, buttons } = {}) {
+  setActivity({ details, state, detailsUrl, stateUrl, largeImageKey, largeImageText, largeImageUrl, smallImageKey, smallImageText, buttons } = {}) {
     if (!this.ready || !this.socket) return Promise.resolve(null);
     const activity = {};
     if (details) activity.details = String(details).substring(0, 128);
     if (state) activity.state = String(state).substring(0, 128);
-    if (largeImageKey || largeImageText || smallImageKey || smallImageText) {
+    if (detailsUrl) activity.details_url = String(detailsUrl).substring(0, 512);
+    if (stateUrl) activity.state_url = String(stateUrl).substring(0, 512);
+    if (largeImageKey || largeImageText || largeImageUrl || smallImageKey || smallImageText) {
       activity.assets = {};
       if (largeImageKey) activity.assets.large_image = largeImageKey;
       if (largeImageText) activity.assets.large_text = String(largeImageText).substring(0, 128);
+      if (largeImageUrl) activity.assets.large_url = String(largeImageUrl).substring(0, 512);
       if (smallImageKey) activity.assets.small_image = smallImageKey;
       if (smallImageText) activity.assets.small_text = String(smallImageText).substring(0, 128);
     }
@@ -158,7 +168,9 @@ class DiscordRPC {
   }
 
   disconnect() {
+    this.enabled = false;
     if (this._reconnectTimer) clearTimeout(this._reconnectTimer);
+    this._reconnectTimer = null;
     if (this.socket) {
       try { this._rawSend(2, '{}'); } catch {}
       try { this.socket.destroy(); } catch {}
@@ -169,6 +181,7 @@ class DiscordRPC {
   }
 
   _scheduleReconnect() {
+    if (!this.enabled) return;
     if (this._reconnectTimer) clearTimeout(this._reconnectTimer);
     this._reconnectTimer = setTimeout(() => this.connect().catch(() => {}), 15000);
   }
