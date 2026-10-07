@@ -1,4 +1,12 @@
-const AnimeOnModules = window.AnimeOn?.features || { modules: [] };
+import { initLocalTools } from './local-tools.js';
+import { initScreenshots } from './screenshots.js';
+import { initTabsView } from './tabs-view.js';
+import { initHotkeys } from './hotkeys.js';
+import { initAccessKeyFeature } from './access-key.js';
+import { initPageLibrary } from './pages.js';
+import { initThemeController } from './theme.js';
+import { initSiteAppearance } from './site-appearance.js';
+
 
 const __splashFallback = (() => {
   const root = document.getElementById('splash');
@@ -99,7 +107,7 @@ function createTabWebview(index) {
   webview.id = `wv-tab-${index}`;
   webview.setAttribute('allowpopups', '');
   webview.setAttribute('partition', 'persist:animeon');
-  webview.setAttribute('webpreferences', 'webSecurity=no,contextIsolation=yes,sandbox=no,allowRunningInsecureContent=yes');
+  webview.setAttribute('webpreferences', 'webSecurity=yes,contextIsolation=yes,sandbox=yes,allowRunningInsecureContent=no');
   webview.className = 'animeon-tab-webview';
   webview.style.cssText = 'display:none;visibility:hidden;position:absolute;inset:0;width:100%;height:100%;border:0;z-index:0;background:#050507;';
   webviewHost?.appendChild(webview);
@@ -147,6 +155,15 @@ const btnSite = document.getElementById('btn-site');
 const btnMax = document.getElementById('btn-max');
 const btnFs = document.getElementById('btn-fs');
 const btnClose = document.getElementById('btn-close');
+btnBack?.addEventListener('click', () => { if (wv.canGo()) wv.goBack(); });
+btnFwd?.addEventListener('click', () => { if (wv.canGoForward()) wv.goForward(); });
+btnHome?.addEventListener('click', () => openSite(currentSite || cfg.site || 'cc'));
+btnReload?.addEventListener('click', () => wv.reload());
+btnMax?.addEventListener('click', () => window.native.minimizeWindow());
+btnFs?.addEventListener('click', () => window.native.toggleMaximize());
+btnClose?.addEventListener('click', () => window.native.close());
+window.native.onWinState?.((maximized) => btnFs?.classList.toggle('is-max', !!maximized));
+window.native.onFsState?.((fullscreen) => document.body.classList.toggle('is-fs', !!fullscreen));
 const btnSettings = document.getElementById('btn-settings');
 const btnHotkeysMain = document.getElementById('btn-hotkeys-main');
 const btnScreenshotsMain = document.getElementById('btn-screenshots-main');
@@ -169,6 +186,8 @@ const screenshotsCount = document.getElementById('screenshots-count');
 const btnScreenshotsOpenFolder = document.getElementById('btn-screenshots-open-folder');
 const btnCloseSettings = document.getElementById('btn-close-settings');
 const picker = document.getElementById('site-picker');
+const welcomeScreen = document.getElementById('welcome-screen');
+const welcomeContinue = document.getElementById('btn-welcome-continue');
 const rememberPick = document.getElementById('remember-pick');
 const rememberSettings = document.getElementById('remember-settings');
 const autostartToggle = document.getElementById('autostart-toggle');
@@ -191,10 +210,10 @@ const offlineRetry = document.getElementById('offline-retry');
 const confirmScreen = document.getElementById('confirm-close-screen');
 const confirmYes = document.getElementById('confirm-close-yes');
 const confirmNo = document.getElementById('confirm-close-no');
-const performanceSelect = document.getElementById('performance-select');
+const performanceSelect = initCSelect('performance-select', (v) => { store('performance', v); window.native.setPerformance(v); applyPerformance(v); });
 const autoRecoveryToggle = document.getElementById('autorecovery-toggle');
 const confirmCloseToggle = document.getElementById('confirmclose-toggle');
-const closeBehaviorSelect = document.getElementById('close-behavior-select');
+const closeBehaviorSelect = initCSelect('close-behavior-select', (v) => { store('closeBehavior', v); store('confirmClose', v === 'ask'); if (confirmCloseToggle) confirmCloseToggle.checked = v === 'ask'; });
 const btnClearData = document.getElementById('btn-clear-data');
 const btnConnectionCheck = document.getElementById('btn-connection-check');
 const btnExportSettings = document.getElementById('btn-export-settings');
@@ -202,20 +221,13 @@ const btnImportSettings = document.getElementById('btn-import-settings');
 const btnResetSettings = document.getElementById('btn-reset-settings');
 const btnResetWebviewState = document.getElementById('btn-reset-webview-state');
 const btnOpenDataFolder = document.getElementById('btn-open-data-folder');
-const smoothSiteToggle = document.getElementById('smoothsite-toggle');
 const siteCssInput = document.getElementById('site-css-input');
 const btnSiteCssApply = document.getElementById('btn-site-css-apply');
 const btnSiteCssReset = document.getElementById('btn-site-css-reset');
-const visualRadius = document.getElementById('visual-radius');
-const visualOpacity = document.getElementById('visual-opacity');
-const visualBlur = document.getElementById('visual-blur');
-const visualScale = document.getElementById('visual-scale');
-const visualDensity = document.getElementById('visual-density');
-const visualGlow = document.getElementById('visual-glow');
-const visualAnimation = document.getElementById('visual-animation');
-const visualApply = document.getElementById('btn-visual-apply');
-const visualReset = document.getElementById('btn-visual-reset');
-const styleProfileSelect = document.getElementById('style-profile-select');
+const smoothScrollToggle = document.getElementById('smooth-scroll-toggle');
+const siteScrollbarsToggle = document.getElementById('site-scrollbars-toggle');
+let profileValue = '';
+const profileSelect = initCSelect('profile-select', null);
 const styleProfileName = document.getElementById('style-profile-name');
 const btnProfileSave = document.getElementById('btn-profile-save');
 const btnProfileLoad = document.getElementById('btn-profile-load');
@@ -238,9 +250,8 @@ const btnErrorMirror = document.getElementById('btn-error-mirror');
 const posterWall = document.getElementById('poster-wall');
 const pageToolbar = document.getElementById('page-toolbar');
 const tabsBar = document.getElementById('tabs-bar');
-const btnPages = document.getElementById('btn-pages');
-const btnPageFavorite = document.getElementById('btn-page-favorite');
-const btnPageFavorites = document.getElementById('btn-page-favorites');
+const tabsCount = document.getElementById('tabs-count');
+const tabsSidebarToggle = document.getElementById('btn-tabs-sidebar-toggle');
 const btnNewTab = document.getElementById('btn-new-tab');
 const btnDnd = document.getElementById('btn-dnd');
 const findBar = document.getElementById('find-bar');
@@ -249,23 +260,31 @@ const findPrev = document.getElementById('find-prev');
 const findNext = document.getElementById('find-next');
 const findClose = document.getElementById('find-close');
 const findCount = document.getElementById('find-count');
-const pagesModal = document.getElementById('pages-modal');
-const btnClosePages = document.getElementById('btn-close-pages');
-const recentPagesList = document.getElementById('recent-pages-list');
-const favoritesModal = document.getElementById('favorites-modal');
-const btnCloseFavorites = document.getElementById('btn-close-favorites');
-const favoritePagesList = document.getElementById('favorite-pages-list');
+const watchNotesModal = document.getElementById('watch-notes-modal');
+const btnCloseWatchNotes = document.getElementById('btn-close-watch-notes');
+const btnWatchNotes = document.getElementById('btn-watch-notes');
 const resumeToggle = document.getElementById('resume-toggle');
 const autoNextToggle = document.getElementById('autonext-toggle');
 const dndToggle = document.getElementById('dnd-toggle');
 const notifyAdvancedToggle = document.getElementById('notify-toggle-advanced');
+const discordRpcControls = {
+  enabled: document.getElementById('discord-rpc-enabled'),
+};
 const cacheAutoToggle = document.getElementById('cache-auto-toggle');
 const cacheLimit = document.getElementById('cache-limit');
 const cacheInfoText = document.getElementById('cache-info-text');
 const memorySaverToggle = document.getElementById('memory-saver-toggle');
+const autoMirrorToggle = document.getElementById('auto-mirror-toggle');
+const proxyHost = document.getElementById('proxy-host');
+const proxyUser = document.getElementById('proxy-user');
+const proxyPass = document.getElementById('proxy-pass');
+const dohToggle = document.getElementById('doh-toggle');
+const netMirrorList = document.getElementById('net-mirror-list');
+const btnNetApply = document.getElementById('btn-net-apply');
 
 
 let booted = false;
+let firstLaunchOnboarding = false;
 
 setTimeout(() => {
   try {
@@ -274,8 +293,10 @@ setTimeout(() => {
     try { __splashFallback?.takeOver(); } catch {}
     try { revealApp(0); } catch {}
     try {
-      const p = document.getElementById('site-picker');
-      if (p) { p.classList.add('show'); document.body.classList.add('picker-visible'); }
+      if (!firstLaunchOnboarding) {
+        const p = document.getElementById('site-picker');
+        if (p) { p.classList.add('show'); document.body.classList.add('picker-visible'); }
+      }
     } catch {}
   } catch (e) {
     try { console.error('[AnimeOn] watchdog error', e); } catch {}
@@ -285,6 +306,40 @@ setTimeout(() => {
 let currentSite = null;
 
 const cfg = window.native.getConfig() || {};
+firstLaunchOnboarding = cfg.onboardingComplete !== true;
+window.__startupOnboarding = firstLaunchOnboarding;
+const accessKeyFeature = initAccessKeyFeature({
+  native: window.native, cfg, toast, askConfirmation,
+  isFirstLaunch: () => firstLaunchOnboarding,
+  isRememberedSite: () => rememberSite,
+  reloadWebviews: () => tabWebviews.forEach((webview) => { try { webview?.reload(); } catch {} }),
+});
+const DEFAULT_DISCORD_RPC_SETTINGS = {
+  enabled: true,
+};
+cfg.discordRpc = { ...DEFAULT_DISCORD_RPC_SETTINGS, ...(cfg.discordRpc || {}) };
+delete cfg.discordRpc.showDubbing;
+
+function syncDiscordRpcControls() {
+  for (const [key, input] of Object.entries(discordRpcControls)) {
+    if (input) input.checked = cfg.discordRpc[key] !== false;
+  }
+}
+
+syncDiscordRpcControls();
+for (const [key, input] of Object.entries(discordRpcControls)) {
+  input?.addEventListener('change', async () => {
+    const result = await window.native.setDiscordRpcSettings({ [key]: input.checked });
+    if (!result?.ok) {
+      input.checked = !input.checked;
+      toast(result?.error || 'Не удалось применить настройки Discord RPC', 'error');
+      return;
+    }
+    cfg.discordRpc = { ...DEFAULT_DISCORD_RPC_SETTINGS, ...(result.settings || cfg.discordRpc) };
+    syncDiscordRpcControls();
+    toast(key === 'enabled' ? (input.checked ? 'Статус Discord включён' : 'Статус Discord выключен') : 'Настройки Discord сохранены');
+  });
+}
 
 const SITES = {
   cc: { url: 'https://animeon.cc/', label: 'animeon.cc' },
@@ -335,16 +390,53 @@ try {
 
 async function loadSitesFromRemote() {
   try {
+    const previousSites = { cc: { ...SITES.cc }, co: { ...SITES.co } };
     const r = await window.native.fetchSites();
     if (r?.ok) {
-      if (applySiteList(r.sites)) return;
+      if (applySiteList(r.sites)) {
+        const remapSiteUrl = (value) => {
+          try {
+            const url = new URL(String(value || ''));
+            for (const id of ['cc', 'co']) {
+              const oldHost = new URL(previousSites[id].url).hostname.toLowerCase();
+              if (url.hostname.toLowerCase() !== oldHost && !url.hostname.toLowerCase().endsWith(`.${oldHost}`)) continue;
+              const newSiteUrl = new URL(SITES[id].url);
+              url.protocol = newSiteUrl.protocol;
+              url.host = newSiteUrl.host;
+              return url.href;
+            }
+          } catch {}
+          return value;
+        };
+        const remapItems = (items) => (Array.isArray(items) ? items.map((item) => {
+          if (typeof item === 'string') return remapSiteUrl(item);
+          return item && typeof item === 'object' && item.url ? { ...item, url: remapSiteUrl(item.url) } : item;
+        }) : []);
+        cfg.siteList = r.sites;
+        cfg.tabs = remapItems(cfg.tabs);
+        cfg.lastUrl = remapSiteUrl(cfg.lastUrl);
+        cfg.history = remapItems(cfg.history);
+        cfg.favorites = remapItems(cfg.favorites);
+        cfg.recentPages = remapItems(cfg.recentPages);
+        cfg.pageFavorites = remapItems(cfg.pageFavorites);
+        window.native.setConfig({
+          siteList: cfg.siteList,
+          tabs: cfg.tabs,
+          lastUrl: cfg.lastUrl,
+          history: cfg.history,
+          favorites: cfg.favorites,
+          recentPages: cfg.recentPages,
+          pageFavorites: cfg.pageFavorites,
+        });
+        return true;
+      }
     }
     applySiteList(r?.sites || cfg.siteList);
   } catch {
     try { applySiteList(cfg.siteList); } catch {}
   }
 }
-loadSitesFromRemote();
+const remoteSitesReady = loadSitesFromRemote();
 const appInfo = window.native.getAppInfo() || { version: '' };
 document.getElementById('about-version-value')?.append(`v${appInfo.version || ''}`);
 
@@ -354,78 +446,32 @@ function store(k, v) {
   window.native.setConfig({ [k]: v });
 }
 
-function getAccentRgb() {
-  return getComputedStyle(document.documentElement).getPropertyValue('--a-rgb').trim() || '139,92,246';
-}
-
-function scrollCss(rgb) {
-  return [
-    '::-webkit-scrollbar{width:9px;height:9px}',
-    '::-webkit-scrollbar-track{background:rgba(255,255,255,.04)}',
-    `::-webkit-scrollbar-thumb{background:rgba(${rgb},.55);border-radius:8px}`,
-    `::-webkit-scrollbar-thumb:hover{background:rgba(${rgb},.85)}`,
-    '::-webkit-scrollbar-corner{background:transparent}',
-  ].join('');
-}
-
-function getVisual() {
-  const v = cfg.visual && typeof cfg.visual === 'object' ? cfg.visual : {};
-  return { radius:Number.isFinite(Number(v.radius)) ? Number(v.radius) : 18, opacity:Number.isFinite(Number(v.opacity)) ? Number(v.opacity) : 96, blur:Number.isFinite(Number(v.blur)) ? Number(v.blur) : 0, scale:Number.isFinite(Number(v.scale)) ? Number(v.scale) : 100, density:Number.isFinite(Number(v.density)) ? Number(v.density) : 100, accentGlow:Number.isFinite(Number(v.accentGlow)) ? Number(v.accentGlow) : 55, animations:['off','smooth','cinematic'].includes(v.animations) ? v.animations : 'smooth' };
-}
-
-function visualCss() {
-  const v = getVisual();
-  const scale = v.scale / 100;
-  const density = v.density / 100;
-  const alpha = v.opacity / 100;
-  const glow = v.accentGlow / 100;
-  const transition = v.animations === 'cinematic' ? '620ms cubic-bezier(.16,1,.3,1)' : v.animations === 'smooth' ? '360ms cubic-bezier(.22,1,.36,1)' : '0ms';
-  return `:root{--animeon-radius:${v.radius}px;--animeon-alpha:${alpha};--animeon-blur:${v.blur}px;--animeon-density:${density};--animeon-transition:${transition};--animeon-glow:${glow};--animeon-scale:${scale}}html{scroll-behavior:${cfg.smoothSite !== false ? 'smooth' : 'auto'}!important;scroll-padding-top:16px}${hideScrollbarCss()}`;
-}
-
-function hideScrollbarCss() {
-  return '*{scrollbar-width:none!important}*::-webkit-scrollbar{width:0!important;height:0!important;display:none!important}';
-}
-
-function syncVisualUI() {
-  const v=getVisual();
-  const set=(el,val,out,suffix)=>{if(!el)return;el.value=val;if(out)out.textContent=`${val}${suffix}`};
-  set(visualRadius,v.radius,document.getElementById('visual-radius-value'),'px');
-  set(visualOpacity,v.opacity,document.getElementById('visual-opacity-value'),'%');
-  set(visualBlur,v.blur,document.getElementById('visual-blur-value'),'px');
-  set(visualScale,v.scale,document.getElementById('visual-scale-value'),'%');
-  set(visualDensity,v.density,document.getElementById('visual-density-value'),'%');
-  set(visualGlow,v.accentGlow,document.getElementById('visual-glow-value'),'%');
-  if(visualAnimation) visualAnimation.value=v.animations;
-}
-
-function readVisualUI() {
-  return {radius:Number(visualRadius?.value)||18,opacity:Number(visualOpacity?.value)||92,blur:Number.isFinite(Number(visualBlur?.value)) ? Number(visualBlur?.value) : 0,scale:Number(visualScale?.value)||100,density:Number(visualDensity?.value)||100,accentGlow:Number(visualGlow?.value)||70,animations:visualAnimation?.value||'smooth'};
-}
-
-async function applyVisualStyle(save=true) {
-  cfg.visual=readVisualUI();
-  if(save) store('visual',cfg.visual);
-  await applyGuestStyles();
-}
-
-let visualApplyTimer=null;
-[visualRadius,visualOpacity,visualBlur,visualScale,visualDensity,visualGlow].forEach((el)=>el?.addEventListener('input',()=>{
-  const out=document.getElementById(el.id+'-value');
-  if(out) out.textContent=`${el.value}${el.id.includes('radius')||el.id.includes('blur')?'px':'%'}`;
-  clearTimeout(visualApplyTimer);
-  visualApplyTimer=setTimeout(()=>applyVisualStyle(true),120);
-}));
-visualAnimation?.addEventListener('change',()=>applyVisualStyle(true));
-visualApply?.addEventListener('click',()=>applyVisualStyle(true).then(()=>toast('Визуальный стиль применён')));
-visualReset?.addEventListener('click',()=>{cfg.visual={radius:18,opacity:96,blur:0,scale:100,density:100,accentGlow:55,animations:'smooth'};store('visual',cfg.visual);syncVisualUI();applyGuestStyles();toast('Визуальный стиль сброшен')});
+const siteAppearance = initSiteAppearance({
+  cfg,
+  store,
+  applyGuestStyles,
+  toast,
+  smoothScrollToggle,
+  siteScrollbarsToggle,
+});
 
 function refreshProfiles(){
-  if(!styleProfileSelect)return;
-  const current=styleProfileSelect.value;
-  styleProfileSelect.innerHTML='<option value="">Выберите профиль</option>';
-  Object.keys(cfg.profiles||{}).sort().forEach(name=>{const o=document.createElement('option');o.value=name;o.textContent=name;styleProfileSelect.appendChild(o)});
-  if((cfg.profiles||{})[current])styleProfileSelect.value=current;
+  if(!profileSelect) return;
+  const list = profileSelect.root.querySelector('.cselect-list');
+  list.innerHTML = '';
+  Object.keys(cfg.profiles || {}).sort().forEach(name=>{
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.dataset.value = name;
+    b.innerHTML = '<span class="cselect-t"><b></b></span><svg class="cselect-check" viewBox="0 0 24 24"><path d="M5 13l4 4 10-11"/></svg>';
+    b.querySelector('b').textContent = name;
+    list.appendChild(b);
+  });
+  const keep = (cfg.profiles || {})[profileValue] ? profileValue : '';
+  profileValue = keep;
+  const label = profileSelect.root.querySelector('.cselect-label');
+  if (keep) profileSelect.pick(keep);
+  else { profileSelect.root.dataset.value = ''; if (label) { label.textContent = 'Выберите профиль'; label.classList.add('dim'); } }
 }
 
 btnProfileSave?.addEventListener('click',()=>{
@@ -433,24 +479,25 @@ btnProfileSave?.addEventListener('click',()=>{
   if(!name){toast('Введите название профиля','error');return}
   const key=currentSite==='co'?'co':'cc';
   if(!cfg.profiles||typeof cfg.profiles!=='object')cfg.profiles={};
-  cfg.profiles[name]={theme:activeTheme,visual:getVisual(),smoothSite:cfg.smoothSite!==false,css:cfg.customCss?.[key]||'',resumeEnabled:cfg.resumeEnabled!==false,autoNext:!!cfg.autoNext,notify:!!cfg.notify,doNotDisturb:!!cfg.doNotDisturb,performance:cfg.performance||'balanced',lowPower:!!cfg.lowPower,memorySaver:!!cfg.memorySaver,autoCacheCleanup:cfg.autoCacheCleanup!==false,cacheLimitMB:Number(cfg.cacheLimitMB)||512,playbackSpeed:Number(cfg.playbackSpeed)||1,hotkeys:{...(cfg.hotkeys||{})}};
+  cfg.profiles[name]={theme:getActiveTheme(),visual:siteAppearance.getVisual(),smoothSite:cfg.smoothSite!==false,showSiteScrollbars:!!cfg.showSiteScrollbars,css:cfg.customCss?.[key]||'',resumeEnabled:cfg.resumeEnabled!==false,autoNext:!!cfg.autoNext,notify:!!cfg.notify,doNotDisturb:!!cfg.doNotDisturb,performance:cfg.performance||'balanced',lowPower:!!cfg.lowPower,memorySaver:!!cfg.memorySaver,autoCacheCleanup:cfg.autoCacheCleanup!==false,cacheLimitMB:Number(cfg.cacheLimitMB)||512,playbackSpeed:Number(cfg.playbackSpeed)||1,hotkeys:{...(cfg.hotkeys||{})}};
   store('profiles',cfg.profiles);
   refreshProfiles();
-  styleProfileSelect.value=name;
+  profileValue=name;
+  profileSelect?.pick(name);
   toast('Профиль сохранён');
 });
 btnProfileLoad?.addEventListener('click',()=>{
-  const name=styleProfileSelect?.value; const profile=cfg.profiles?.[name];
+  const name=profileValue; const profile=cfg.profiles?.[name];
   if(!profile){toast('Выберите профиль','error');return}
   applyTheme(profile.theme||'violet',{skipSave:false});
-  cfg.visual=profile.visual||getVisual();cfg.smoothSite=profile.smoothSite!==false;cfg.resumeEnabled=profile.resumeEnabled!==false;cfg.autoNext=!!profile.autoNext;cfg.notify=!!profile.notify;cfg.doNotDisturb=!!profile.doNotDisturb;cfg.performance=profile.performance||'balanced';cfg.lowPower=!!profile.lowPower;cfg.memorySaver=!!profile.memorySaver;cfg.autoCacheCleanup=profile.autoCacheCleanup!==false;cfg.cacheLimitMB=Number(profile.cacheLimitMB)||512;cfg.playbackSpeed=Number(profile.playbackSpeed)||1;cfg.hotkeys={...(profile.hotkeys||cfg.hotkeys||{})};
+  cfg.visual=profile.visual||siteAppearance.getVisual();cfg.smoothSite=profile.smoothSite!==false;cfg.showSiteScrollbars=!!profile.showSiteScrollbars;cfg.resumeEnabled=profile.resumeEnabled!==false;cfg.autoNext=!!profile.autoNext;cfg.notify=!!profile.notify;cfg.doNotDisturb=!!profile.doNotDisturb;cfg.performance=profile.performance||'balanced';cfg.lowPower=!!profile.lowPower;cfg.memorySaver=!!profile.memorySaver;cfg.autoCacheCleanup=profile.autoCacheCleanup!==false;cfg.cacheLimitMB=Number(profile.cacheLimitMB)||512;cfg.playbackSpeed=Number(profile.playbackSpeed)||1;cfg.hotkeys={...(profile.hotkeys||cfg.hotkeys||{})};
   const key=currentSite==='co'?'co':'cc';
   if(!cfg.customCss)cfg.customCss={cc:'',co:''};cfg.customCss[key]=profile.css||'';
-  store('visual',cfg.visual);store('smoothSite',cfg.smoothSite);store('customCss',cfg.customCss);
-  syncVisualUI();loadSiteEditor();applyGuestStyles(); if(resumeToggle)resumeToggle.checked=cfg.resumeEnabled!==false;if(autoNextToggle)autoNextToggle.checked=!!cfg.autoNext;if(dndToggle)dndToggle.checked=!!cfg.doNotDisturb;if(notifyAdvancedToggle)notifyAdvancedToggle.checked=!!cfg.notify;if(memorySaverToggle)memorySaverToggle.checked=!!cfg.memorySaver;if(cacheAutoToggle)cacheAutoToggle.checked=cfg.autoCacheCleanup!==false;if(cacheLimit)cacheLimit.value=String(cfg.cacheLimitMB||512);toast('Профиль загружен');
+  store('visual',cfg.visual);store('smoothSite',cfg.smoothSite);store('showSiteScrollbars',cfg.showSiteScrollbars);store('customCss',cfg.customCss);
+  siteAppearance.syncVisualUI();loadSiteEditor();applyGuestStyles(); if(resumeToggle)resumeToggle.checked=cfg.resumeEnabled!==false;if(autoNextToggle)autoNextToggle.checked=!!cfg.autoNext;if(dndToggle)dndToggle.checked=!!cfg.doNotDisturb;if(notifyAdvancedToggle)notifyAdvancedToggle.checked=!!cfg.notify;if(memorySaverToggle)memorySaverToggle.checked=!!cfg.memorySaver;if(cacheAutoToggle)cacheAutoToggle.checked=cfg.autoCacheCleanup!==false;if(cacheLimit)cacheLimit.value=String(cfg.cacheLimitMB||512);toast('Профиль загружен');
 });
 btnProfileDelete?.addEventListener('click',()=>{
-  const name=styleProfileSelect?.value;if(!name||!cfg.profiles?.[name]){toast('Выберите профиль','error');return}
+  const name=profileValue;if(!name||!cfg.profiles?.[name]){toast('Выберите профиль','error');return}
   delete cfg.profiles[name];store('profiles',cfg.profiles);refreshProfiles();toast('Профиль удалён');
 });
 
@@ -459,210 +506,27 @@ async function applyGuestStyles() {
   const key = currentSite || 'cc';
   const custom = cfg.customCss && typeof cfg.customCss === 'object' ? String(cfg.customCss[key] || '') : '';
   const smooth = cfg.smoothSite !== false;
-  const css = `${visualCss()}\n${custom}\n${smooth ? 'html{scroll-behavior:smooth!important;}' : ''}`;
+  const css = `${siteAppearance.buildCss()}\n${custom}\n${smooth ? 'html{scroll-behavior:smooth!important;}' : ''}`;
   try { await window.native.applySiteCss(css); } catch {}
 }
 
-function resetThemeVars() {
-  ['--a-rgb', '--al-rgb', '--am-rgb', '--ad-rgb'].forEach((p) =>
-    document.documentElement.style.removeProperty(p));
-}
+const { applyTheme, getActiveTheme } = initThemeController({ cfg, store, applyGuestStyles, toast });
 
-const themeSwatches = [...document.querySelectorAll('.theme-swatch')];
-const themeName = document.getElementById('theme-name');
-const customColorInput = document.getElementById('custom-color-input');
-const customColorOpen = document.getElementById('custom-color-open');
-const customPicker = document.getElementById('custom-picker');
-const customPickerClose = document.getElementById('custom-picker-close');
-const customPickerDone = document.getElementById('custom-picker-done');
-const customHexInput = document.getElementById('custom-hex-input');
-const customPickerCopy = document.getElementById('custom-picker-copy');
-const customPickerEyedropper = document.getElementById('custom-picker-eyedropper');
-const pickerSv = document.getElementById('picker-sv');
-const pickerCursor = document.getElementById('picker-cursor');
-const pickerHue = document.getElementById('picker-hue');
-const pickerHueCursor = document.getElementById('picker-hue-cursor');
-const pickerPreviewName = document.getElementById('custom-picker-preview-name');
-const customColorValue = document.getElementById('custom-color-value');
-const customColorCopy = document.getElementById('custom-color-copy');
-const THEME_NAMES = {violet:'Фиолетовый',blue:'Синий',cyan:'Бирюзовый',sky:'Небесный',indigo:'Индиго',emerald:'Изумрудный',green:'Зелёный',lime:'Лаймовый',yellow:'Жёлтый',amber:'Янтарный',orange:'Оранжевый',red:'Красный',rose:'Розовый',pink:'Розовый',fuchsia:'Фуксия',slate:'Серо-синий',gray:'Серый',teal:'Тёмная бирюза',mint:'Мята',gold:'Золото',coral:'Коралл',lavender:'Лаванда',crimson:'Алый',electric:'Электрик',light:'Светлая'};
-
-const PRESET_THEMES = new Set(['violet','blue','cyan','sky','indigo','emerald','green','lime','yellow','amber','orange','red','rose','pink','fuchsia','slate','gray','teal','mint','gold','coral','lavender','crimson','electric','light']);
-let activeTheme = PRESET_THEMES.has(cfg.theme) || cfg.theme === 'custom' ? cfg.theme : 'violet';
-if (!cfg.custom) cfg.custom = '#8b5cf6';
-
-function hexRgb(hex) {
-  const clean = String(hex || '').replace('#','');
-  const full = clean.length === 3 ? clean.split('').map(x => x + x).join('') : clean.padEnd(6, '0').slice(0, 6);
-  const n = parseInt(full, 16) || 0x8b5cf6;
-  return [n >> 16 & 255, n >> 8 & 255, n & 255];
-}
-
-function mixRgb(rgb, target, amount) {
-  return rgb.map((v, i) => Math.round(v + (target[i] - v) * amount));
-}
-
-function applyCustomColor(hex) {
-  const rgb = hexRgb(hex);
-  const light = mixRgb(rgb, [255,255,255], .42);
-  const mid = mixRgb(rgb, [0,0,0], .18);
-  const dark = mixRgb(rgb, [0,0,0], .38);
-  const root = document.documentElement;
-  root.style.setProperty('--a-rgb', rgb.join(','));
-  root.style.setProperty('--al-rgb', light.join(','));
-  root.style.setProperty('--am-rgb', mid.join(','));
-  root.style.setProperty('--ad-rgb', dark.join(','));
-}
-
-function isNight() {
-  const h = new Date().getHours();
-  return h >= 22 || h < 6;
-}
-
-function applyTheme(t, opts = {}) {
-  document.documentElement.classList.add('theme-transitioning');
-  clearTimeout(window.__themeTransitionTimer);
-  window.__themeTransitionTimer = setTimeout(() => document.documentElement.classList.remove('theme-transitioning'), 520);
-
-  if (t !== undefined) activeTheme = t;
-
-  resetThemeVars();
-  document.documentElement.dataset.theme = activeTheme;
-  if (activeTheme === 'custom') applyCustomColor(cfg.custom);
-  themeSwatches.forEach((b) => b.classList.toggle('active', b.dataset.theme === activeTheme));
-  if (themeName) themeName.textContent = activeTheme === 'custom' ? 'Свой цвет' : (THEME_NAMES[activeTheme] || activeTheme);
-  if (customColorInput) customColorInput.value = cfg.custom || '#8b5cf6';
-  if (customColorValue) customColorValue.textContent = String(cfg.custom || '#8b5cf6').toUpperCase();
-  customColorOpen?.style.setProperty('--picker-color', cfg.custom || '#8b5cf6');
-  if (pickerOpen) updatePickerVisual(cfg.custom || '#8B5CF6');
-
-  if (!opts.skipSave) store('theme', activeTheme);
-  applyGuestStyles();
-}
-
-
-let pickerHueValue = 260;
-let pickerSatValue = 0.65;
-let pickerValValue = 0.96;
-let pickerOpen = false;
-
-function clamp(n,min,max){return Math.min(max,Math.max(min,n))}
-function hsvToHex(h,s,v){
-  const c=v*s,x=c*(1-Math.abs((h/60)%2-1)),m=v-c;
-  let r=0,g=0,b=0;
-  if(h<60){r=c;g=x}else if(h<120){r=x;g=c}else if(h<180){g=c;b=x}else if(h<240){g=x;b=c}else if(h<300){r=x;b=c}else{r=c;b=x}
-  return '#'+[r,g,b].map(q=>Math.round((q+m)*255).toString(16).padStart(2,'0')).join('').toUpperCase();
-}
-function hexToHsv(hex){
-  const [r,g,b]=hexRgb(hex).map(v=>v/255);
-  const max=Math.max(r,g,b),min=Math.min(r,g,b),d=max-min;
-  let h=0;
-  if(d){if(max===r)h=60*((g-b)/d%6);else if(max===g)h=60*((b-r)/d+2);else h=60*((r-g)/d+4);if(h<0)h+=360}
-  return [h,max?d/max:0,max];
-}
-function validHex(v){return /^#?(?:[0-9a-f]{6}|[0-9a-f]{3})$/i.test(String(v).trim())}
-function normalizeHex(v){
-  let x=String(v).trim().replace(/^#/,'');
-  if(x.length===3)x=x.split('').map(c=>c+c).join('');
-  return '#'+x.toUpperCase();
-}
-function updatePickerVisual(hex){
-  const [h,s,v]=hexToHsv(hex);
-  pickerHueValue=h;pickerSatValue=s;pickerValValue=v;
-  if(pickerSv)pickerSv.style.background=`linear-gradient(to top,#000,transparent),linear-gradient(to right,#fff,rgba(255,255,255,0)),hsl(${h} 100% 50%)`;
-  if(pickerCursor){pickerCursor.style.left=`${s*100}%`;pickerCursor.style.top=`${(1-v)*100}%`}
-  if(pickerHueCursor)pickerHueCursor.style.left=`${h/360*100}%`;
-  if(customHexInput)customHexInput.value=normalizeHex(hex);
-  if(pickerPreviewName)pickerPreviewName.textContent=normalizeHex(hex);
-}
-function setCustomHex(hex,save=true){
-  if(!validHex(hex))return false;
-  const value=normalizeHex(hex);
-  cfg.custom=value;
-  activeTheme='custom';
-  if(save){store('custom',value);store('theme','custom')}
-  applyTheme('custom',{skipSave:true});
-  updatePickerVisual(value);
-  return true;
-}
-function openCustomPicker(){
-  if(!customPicker)return;
-  pickerOpen=true;customPicker.hidden=false;
-  updatePickerVisual(cfg.custom||'#8B5CF6');
-  customHexInput?.focus();customHexInput?.select();
-}
-function closeCustomPicker(){pickerOpen=false;if(customPicker)customPicker.hidden=true}
-function pickFromSv(e){
-  const r=pickerSv.getBoundingClientRect();
-  pickerSatValue=clamp((e.clientX-r.left)/r.width,0,1);
-  pickerValValue=clamp(1-(e.clientY-r.top)/r.height,0,1);
-  setCustomHex(hsvToHex(pickerHueValue,pickerSatValue,pickerValValue));
-}
-function pickFromHue(e){
-  const r=pickerHue.getBoundingClientRect();
-  pickerHueValue=clamp((e.clientX-r.left)/r.width,0,1)*360;
-  setCustomHex(hsvToHex(pickerHueValue,pickerSatValue,pickerValValue));
-}
-function dragPicker(el,fn){
-  if(!el)return;
-  let down=false;
-  const apply=e=>{fn(e);e.preventDefault()};
-  const move=e=>{if(down)apply(e)};
-  el.addEventListener('pointerdown',e=>{down=true;try{el.setPointerCapture(e.pointerId)}catch{}apply(e)});
-  el.addEventListener('pointermove',move);
-  el.addEventListener('pointerup',()=>{down=false});
-  el.addEventListener('pointercancel',()=>{down=false});
-  el.addEventListener('lostpointercapture',()=>{down=false});
-  el.addEventListener('click',e=>apply(e));
-  el.addEventListener('mousedown',e=>apply(e));
-}
-customColorOpen?.addEventListener('click',()=>pickerOpen?closeCustomPicker():openCustomPicker());
-customPickerClose?.addEventListener('click',closeCustomPicker);
-customPickerDone?.addEventListener('click',()=>{if(validHex(customHexInput?.value||'')){setCustomHex(customHexInput.value);closeCustomPicker()}else{toast('Введи HEX вроде #8B5CF6','error')}});
-customHexInput?.addEventListener('input',()=>{
-  const raw=customHexInput.value.trim();
-  if(validHex(raw))setCustomHex(raw);
-});
-customHexInput?.addEventListener('paste',()=>setTimeout(()=>{if(validHex(customHexInput.value))setCustomHex(customHexInput.value)},0));
-customHexInput?.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();if(validHex(customHexInput.value)){setCustomHex(customHexInput.value);closeCustomPicker()}else toast('Введи HEX вроде #8B5CF6','error')}});
-dragPicker(pickerSv,pickFromSv);
-dragPicker(pickerHue,pickFromHue);
-customPickerCopy?.addEventListener('click',async()=>{
-  const value=normalizeHex(cfg.custom||'#8B5CF6');
-  try{await navigator.clipboard.writeText(value);toast('HEX скопирован')}catch{
-    const ta=document.createElement('textarea');ta.value=value;document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove();toast('HEX скопирован');
-  }
-});
-customColorCopy?.addEventListener('click',async()=>{
-  const value=normalizeHex(cfg.custom||'#8B5CF6');
-  try{await navigator.clipboard.writeText(value);customColorCopy.querySelector('span:last-child').textContent='Скопировано';setTimeout(()=>{const el=customColorCopy.querySelector('span:last-child');if(el)el.textContent='Копировать'},1100);toast('HEX скопирован')}catch{toast('Не удалось скопировать','error')}
-});
-customPickerEyedropper?.addEventListener('click',async()=>{
-  if(!window.EyeDropper){toast('Пипетка недоступна в этой версии Chromium','error');return}
-  try{const result=await new EyeDropper().open();setCustomHex(result.sRGBHex);toast('Цвет выбран')}catch{}
-});
-
-setInterval(() => {
-  const n = isNight();
-  if (n !== document.documentElement.hasAttribute('data-night')) {
-    if (n) document.documentElement.dataset.night = '1';
-    else delete document.documentElement.dataset.night;
-    applyTheme(undefined, { skipSave: true });
-  }
-}, 60000);
-
-themeSwatches.forEach((sw) => {
-  sw.addEventListener('click', () => applyTheme(sw.dataset.theme));
-});
-
-function activateSite(id, { save = true } = {}) {
+function activateSite(id, { save = true, updatePicker = true } = {}) {
   currentSite = id;
   if (save && rememberPick?.checked) store('site', id);
-  document.querySelectorAll('[data-site]').forEach((el) => {
+  document.querySelectorAll('.st-section [data-site]').forEach((el) => {
     const on = el.dataset.site === id;
     el.classList.toggle('selected', on);
     el.classList.toggle('active', on);
   });
+  if (updatePicker) {
+    document.querySelectorAll('#site-picker [data-site]').forEach((el) => {
+      const on = el.dataset.site === id;
+      el.classList.toggle('selected', on);
+      el.classList.toggle('active', on);
+    });
+  }
   updateMirrorBtn();
   loadSiteEditor();
 }
@@ -670,6 +534,7 @@ function activateSite(id, { save = true } = {}) {
 function openSite(id) {
   const s = SITES[id];
   if (!s) return;
+  document.body.classList.add('site-content-ready');
   activateSite(id, { save: false });
   if (!pageTabs.length) pageTabs = [{ url: s.url, title: s.label }];
   else pageTabs[activeTab] = { url: s.url, title: s.label };
@@ -680,20 +545,15 @@ function openSite(id) {
 }
 
 function loadSiteEditor() {
-  if (!siteCssInput || !smoothSiteToggle) return;
-  syncVisualUI();
+  if (!siteCssInput) return;
+  siteAppearance.syncVisualUI();
+  if (smoothScrollToggle) smoothScrollToggle.checked = cfg.smoothSite !== false;
+  if (siteScrollbarsToggle) siteScrollbarsToggle.checked = !!cfg.showSiteScrollbars;
   refreshProfiles();
   const key = currentSite || 'cc';
   const css = cfg.customCss && typeof cfg.customCss === 'object' ? String(cfg.customCss[key] || '') : '';
   siteCssInput.value = css;
-  smoothSiteToggle.checked = cfg.smoothSite !== false;
 }
-
-smoothSiteToggle?.addEventListener('change', async () => {
-  cfg.smoothSite = smoothSiteToggle.checked;
-  store('smoothSite', smoothSiteToggle.checked);
-  await applyGuestStyles();
-});
 
 btnSiteCssApply?.addEventListener('click', async () => {
   if (!currentSite) return;
@@ -759,16 +619,35 @@ document.querySelectorAll('.about-detail-link[data-url]').forEach((el) => {
   el.addEventListener('click', () => window.native.openExternal(el.dataset.url));
 });
 
-btnContinue.addEventListener('click', () => {
+btnContinue.addEventListener('click', async () => {
   if (!currentSite) return;
 
+  if (firstLaunchOnboarding) {
+    firstLaunchOnboarding = false;
+    window.__startupOnboarding = false;
+    store('onboardingComplete', true);
+  }
   store('remember', rememberPick.checked ? '1' : '0');
   if (rememberPick.checked) store('site', currentSite);
   else store('site', null);
 
+  let accessStatus;
+  try { accessStatus = await accessKeyFeature.statusPromise; }
+  catch (error) { toast(`Не удалось проверить ключ доступа: ${String(error?.message || error)}`, 'error'); return; }
+  if (!accessStatus?.ok) {
+    toast(accessStatus?.error || 'Не удалось проверить ключ доступа', 'error');
+    return;
+  }
+  if (accessStatus.enabled) await accessKeyFeature.gate;
+  else if (!accessStatus.promptDismissed) {
+    if (!accessKeyFeature.isVisible()) accessKeyFeature.showPrompt('prompt');
+    await accessKeyFeature.gate;
+  } else accessKeyFeature.releaseSecurityGate();
+
   picker.classList.add('hide');
   setTimeout(() => {
     document.body.classList.remove('picker-visible');
+    document.body.classList.remove('onboarding-mode');
     picker.classList.remove('show');
     if (pendingPosterUrls) {
       const urls = pendingPosterUrls;
@@ -777,6 +656,26 @@ btnContinue.addEventListener('click', () => {
     }
     openSite(currentSite);
   }, 140);
+});
+
+function showWelcomeScreen() {
+  if (!firstLaunchOnboarding || !welcomeScreen) return;
+  welcomeScreen.classList.add('show');
+  welcomeScreen.setAttribute('aria-hidden', 'false');
+  document.body.classList.add('onboarding-mode');
+  requestAnimationFrame(() => welcomeContinue?.focus());
+}
+
+welcomeContinue?.addEventListener('click', () => {
+  if (!picker) return;
+  welcomeScreen?.classList.remove('show');
+  welcomeScreen?.setAttribute('aria-hidden', 'true');
+  setTimeout(() => {
+    picker.classList.remove('hide');
+    picker.classList.add('show');
+    document.body.classList.add('picker-visible', 'onboarding-mode');
+    document.querySelector('#site-picker [data-site].selected')?.focus();
+  }, 260);
 });
 
 rememberPick.addEventListener('change', () => {
@@ -795,21 +694,18 @@ autostartToggle.addEventListener('change', () => store('autostart', autostartTog
 trayToggle.addEventListener('change', () => {
   const enabled = trayToggle.checked;
   store('tray', enabled);
-  if (enabled) {
-    store('closeBehavior', 'tray');
-    store('confirmClose', false);
-    if (closeBehaviorSelect) closeBehaviorSelect.value = 'tray';
-    if (confirmCloseToggle) confirmCloseToggle.checked = false;
-  }
+  const closeBehavior = enabled ? 'tray' : (confirmCloseToggle?.checked ? 'ask' : 'exit');
+  store('closeBehavior', closeBehavior);
+  store('confirmClose', closeBehavior === 'ask');
+  if (closeBehaviorSelect) closeBehaviorSelect.pick(closeBehavior);
+  if (confirmCloseToggle) confirmCloseToggle.checked = closeBehavior === 'ask';
 });
 autohideToggle.addEventListener('change', () => { store('autoHide', autohideToggle.checked); setChromeHidden(false); });
 compactToggle.addEventListener('change', () => { store('compact', compactToggle.checked); document.body.classList.toggle('compact-mode', compactToggle.checked); });
 alwaysOnTopToggle?.addEventListener('change', () => window.native.toggleAlwaysOnTop());
 lowPowerToggle.addEventListener('change', () => { store('lowPower', lowPowerToggle.checked); document.body.classList.toggle('low-power', lowPowerToggle.checked || performanceSelect?.value === 'economy'); });
-performanceSelect?.addEventListener('change', () => { store('performance', performanceSelect.value); window.native.setPerformance(performanceSelect.value); applyPerformance(performanceSelect.value); });
 autoRecoveryToggle?.addEventListener('change', () => store('autoRecovery', autoRecoveryToggle.checked));
-confirmCloseToggle?.addEventListener('change', () => { const v=confirmCloseToggle.checked; store('confirmClose', v); store('closeBehavior', v ? 'ask' : (store('closeBehavior') === 'ask' ? 'exit' : store('closeBehavior'))); if (closeBehaviorSelect) closeBehaviorSelect.value = store('closeBehavior') || (v ? 'ask' : 'exit'); });
-closeBehaviorSelect?.addEventListener('change', () => { store('closeBehavior', closeBehaviorSelect.value); store('confirmClose', closeBehaviorSelect.value === 'ask'); if (confirmCloseToggle) confirmCloseToggle.checked = closeBehaviorSelect.value === 'ask'; });
+confirmCloseToggle?.addEventListener('change', () => { const v=confirmCloseToggle.checked; store('confirmClose', v); store('closeBehavior', v ? 'ask' : (store('closeBehavior') === 'ask' ? 'exit' : store('closeBehavior'))); if (closeBehaviorSelect) closeBehaviorSelect.pick(store('closeBehavior') || (v ? 'ask' : 'exit')); });
 
 function applyPerformance(mode) {
   document.body.dataset.performance = mode;
@@ -818,12 +714,95 @@ function applyPerformance(mode) {
 }
 
 btnRestartWebview?.addEventListener('click', () => { hideError(); wv.reload(); });
-function toast(message, type='ok') {
-  if (!toastStack) return;
-  const el = document.createElement('div'); el.className = `toast ${type}`; el.textContent = message;
-  toastStack.appendChild(el); requestAnimationFrame(() => el.classList.add('show'));
-  setTimeout(() => { el.classList.remove('show'); setTimeout(() => el.remove(), 220); }, 2600);
+const toastIcons = {
+  ok: '<svg viewBox="0 0 24 24"><path d="M4 12.5 9.3 18 20 6"/></svg>',
+  error: '<svg viewBox="0 0 24 24"><path d="M12 3 2.5 20h19z"/><path d="M12 9.5v5"/><circle cx="12" cy="17" r="0.6" fill="currentColor"/></svg>',
+  warning: '<svg viewBox="0 0 24 24"><path d="M12 3 2.5 20h19z"/><path d="M12 9v5"/><circle cx="12" cy="17" r="0.7" fill="currentColor"/></svg>',
+  info: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><circle cx="12" cy="8" r="0.6" fill="currentColor"/></svg>'
+};
+const toastActionIcons = {
+  go: '<svg viewBox="0 0 24 24"><path d="M12 4v10m0 0 4-4m-4 4-4-4M5 19h14"/></svg>',
+  retry: '<svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5"/></svg>'
+};
+function toast(message, type='ok', extra={}) {
+  if (!toastStack) return () => {};
+  const kind = toastIcons[type] ? type : 'ok';
+  const el = document.createElement('div');
+  el.className = `toast ${kind}`;
+  el.setAttribute('role', kind === 'error' ? 'alert' : 'status');
+  el.setAttribute('aria-live', kind === 'error' ? 'assertive' : 'polite');
+  el.innerHTML = '<div class="t-icon">' + toastIcons[kind] + '</div>' +
+    '<div class="t-body"><b></b>' + (extra.body ? '<span></span>' : '') + '</div>' +
+    '<div class="t-side">' +
+    (extra.action ? '<button class="t-action" aria-label="Действие"></button>' : '') +
+    '<button class="t-close">×</button></div>' +
+    '<i class="t-life"></i>';
+  el.querySelector('.t-body b').textContent = message;
+  if (extra.body) el.querySelector('.t-body span').textContent = extra.body;
+  const life = el.querySelector('.t-life');
+  const total = Number(extra.duration) > 0 ? Number(extra.duration) : 3500;
+  let left = total;
+  let hover = false;
+  let dead = false;
+  const actBtn = el.querySelector('.t-action');
+  if (actBtn && extra.action) {
+    actBtn.innerHTML = toastActionIcons[extra.action.icon] || '';
+    actBtn.title = extra.action.title || '';
+    actBtn.addEventListener('click', (e) => { e.stopPropagation(); dismiss(); try { extra.action.onClick && extra.action.onClick(); } catch {} });
+  }
+  el.querySelector('.t-close').addEventListener('click', dismiss);
+  el.addEventListener('mouseenter', () => { hover = true; });
+  el.addEventListener('mouseleave', () => { hover = false; });
+  function dismiss() {
+    if (dead) return;
+    dead = true;
+    clearInterval(timer);
+    el.classList.remove('show');
+    setTimeout(() => el.remove(), 240);
+  }
+  const timer = setInterval(() => {
+    if (hover || dead) return;
+    left -= 50;
+    life.style.width = Math.max(0, (left / total) * 100) + '%';
+    if (left <= 0) dismiss();
+  }, 50);
+  toastStack.appendChild(el);
+  requestAnimationFrame(() => el.classList.add('show'));
+  return dismiss;
 }
+
+function askConfirmation(message, actionLabel = 'Продолжить') {
+  const modal = document.getElementById('action-confirm');
+  const messageElement = document.getElementById('action-confirm-message');
+  const cancel = document.getElementById('action-confirm-cancel');
+  const accept = document.getElementById('action-confirm-accept');
+  if (!modal || !messageElement || !cancel || !accept) return Promise.resolve(false);
+  messageElement.textContent = message;
+  accept.textContent = actionLabel;
+  modal.hidden = false;
+  requestAnimationFrame(() => modal.classList.add('show'));
+  return new Promise((resolve) => {
+    const finish = (confirmed) => {
+      modal.classList.remove('show');
+      modal.hidden = true;
+      cancel.removeEventListener('click', cancelAction);
+      accept.removeEventListener('click', acceptAction);
+      modal.removeEventListener('click', backdropAction);
+      document.removeEventListener('keydown', keyAction);
+      resolve(confirmed);
+    };
+    const cancelAction = () => finish(false);
+    const acceptAction = () => finish(true);
+    const backdropAction = (event) => { if (event.target === modal) finish(false); };
+    const keyAction = (event) => { if (event.key === 'Escape') finish(false); };
+    cancel.addEventListener('click', cancelAction);
+    accept.addEventListener('click', acceptAction);
+    modal.addEventListener('click', backdropAction);
+    document.addEventListener('keydown', keyAction);
+    cancel.focus();
+  });
+}
+
 btnClearCache?.addEventListener('click', async () => {
   btnClearCache.disabled = true;
   const res = await window.native.clearCache();
@@ -832,13 +811,13 @@ btnClearCache?.addEventListener('click', async () => {
   else toast(`Ошибка: ${res?.error || 'неизвестная ошибка'}`, 'error');
 });
 btnClearData?.addEventListener('click', async () => {
-  if (!confirm('Очистить данные сайта AnimeOn? Это может завершить текущую авторизацию.')) return;
+  if (!await askConfirmation('Очистить данные сайта AnimeOn? Это может завершить текущую авторизацию.', 'Очистить данные')) return;
   btnClearData.disabled = true; const res = await window.native.clearSiteData(); btnClearData.disabled = false;
   if (res?.ok) { toast('Данные сайта очищены'); setTimeout(() => wv.reload(), 250); }
   else toast(`Ошибка: ${res?.error || 'неизвестная ошибка'}`, 'error');
 });
 btnConnectionCheck?.addEventListener('click', async () => {
-  btnConnectionCheck.disabled = true; if (diagnosticsOutput) diagnosticsOutput.textContent = 'Проверяю интернет и зеркала…';
+  btnConnectionCheck.disabled = true; if (diagnosticsOutput) diagnosticsOutput.textContent = 'Проверяю интернет и сайты…';
   const r = await window.native.connectionCheck(); btnConnectionCheck.disabled = false;
   const lines = [`Интернет: ${r.internet ? 'доступен' : 'нет соединения'}`];
   (r.results || []).forEach(x => lines.push(`${new URL(x.url).hostname}: ${x.ok ? 'доступен' : 'не отвечает'}${x.status ? ` · HTTP ${x.status}` : ''} · ${x.ms} мс`));
@@ -866,12 +845,41 @@ document.getElementById('btn-check-all')?.addEventListener('click', async () => 
   if (button) button.disabled = false;
 });
 btnExportSettings?.addEventListener('click', async () => { const r = await window.native.exportSettings(); if (r?.ok) toast('Настройки экспортированы'); else if (!r?.canceled) toast(r?.error || 'Не удалось экспортировать настройки', 'error'); });
-btnImportSettings?.addEventListener('click', async () => { const r = await window.native.importSettings(); if (!r?.ok) { if (!r?.canceled) toast(r?.error || 'Не удалось импортировать настройки', 'error'); return; } Object.assign(cfg, r.settings || {}); applyTheme(cfg.theme || 'violet', {skipSave:true}); rememberPick.checked=rememberSettings.checked=cfg.remember==='1'; autostartToggle.checked=!!cfg.autostart; trayToggle.checked=!!cfg.tray; compactToggle.checked=!!cfg.compact; lowPowerToggle.checked=cfg.lowPower!==false; autohideToggle.checked=cfg.autoHide!==false; if(performanceSelect) performanceSelect.value=cfg.performance||'balanced'; if(autoRecoveryToggle) autoRecoveryToggle.checked=cfg.autoRecovery!==false; if(closeBehaviorSelect) closeBehaviorSelect.value=cfg.closeBehavior|| (cfg.confirmClose?'ask':'exit'); if(confirmCloseToggle) confirmCloseToggle.checked=(closeBehaviorSelect?.value==='ask'); document.body.classList.toggle('compact-mode',!!cfg.compact); document.body.classList.toggle('low-power',cfg.lowPower!==false); applyPerformance(cfg.performance||'balanced'); toast('Настройки импортированы'); });
+btnImportSettings?.addEventListener('click', async () => {
+  const result = await window.native.importSettings();
+  if (!result?.ok) {
+    if (!result?.canceled) toast(result?.error || 'Не удалось импортировать настройки', 'error');
+    return;
+  }
+  Object.assign(cfg, result.settings || {});
+  cfg.discordRpc = { ...DEFAULT_DISCORD_RPC_SETTINGS, ...(cfg.discordRpc || {}) };
+  const hotkeyResult = await hotkeysFeature.applyImported(cfg.hotkeys);
+  if (!hotkeyResult?.hotkeys) toast(hotkeyResult?.error || 'Не удалось применить горячие клавиши', 'error');
+  applyTheme(cfg.theme || 'violet', { skipSave: true });
+  rememberPick.checked = rememberSettings.checked = cfg.remember === '1';
+  autostartToggle.checked = !!cfg.autostart;
+  trayToggle.checked = !!cfg.tray;
+  compactToggle.checked = !!cfg.compact;
+  lowPowerToggle.checked = cfg.lowPower !== false;
+  autohideToggle.checked = cfg.autoHide !== false;
+  if (performanceSelect) performanceSelect.pick(cfg.performance || 'balanced');
+  if (autoRecoveryToggle) autoRecoveryToggle.checked = cfg.autoRecovery !== false;
+  if (closeBehaviorSelect) closeBehaviorSelect.pick(cfg.closeBehavior || (cfg.confirmClose ? 'ask' : 'exit'));
+  if (confirmCloseToggle) confirmCloseToggle.checked = (closeBehaviorSelect?.value || cfg.closeBehavior) === 'ask';
+  document.body.classList.toggle('compact-mode', !!cfg.compact);
+  document.body.classList.toggle('low-power', cfg.lowPower !== false);
+  syncDiscordRpcControls();
+  applyPerformance(cfg.performance || 'balanced');
+  if (smoothScrollToggle) smoothScrollToggle.checked = cfg.smoothSite !== false;
+  if (siteScrollbarsToggle) siteScrollbarsToggle.checked = !!cfg.showSiteScrollbars;
+  applyGuestStyles();
+  toast('Настройки импортированы');
+});
 btnResetWebviewState?.addEventListener('click', () => { window.native.restartWebview(); toast('Состояние страницы сброшено'); });
 btnOpenDataFolder?.addEventListener('click', () => { window.native.openDataFolder?.(); });
 btnUpdOpenRelease?.addEventListener('click', () => { if (window.__lastUpdate?.url) window.native.openExternal(window.__lastUpdate.url); });
 
-btnResetSettings?.addEventListener('click', async () => { if (!confirm('Сбросить все настройки AnimeOn?')) return; const r=await window.native.resetSettings(); if(!r?.ok){toast(r?.error||'Не удалось сбросить настройки','error');return;} Object.assign(cfg,r.settings||{}); applyTheme('violet',{skipSave:true}); location.reload(); });
+btnResetSettings?.addEventListener('click', async () => { if (!await askConfirmation('Сбросить все настройки AnimeOn?', 'Сбросить настройки')) return; const r=await window.native.resetSettings(); if(!r?.ok){toast(r?.error||'Не удалось сбросить настройки','error');return;} Object.assign(cfg,r.settings||{}); applyTheme('violet',{skipSave:true}); location.reload(); });
 btnDevtools?.addEventListener('click', () => window.native.toggleDevTools());
 btnDiagnostics?.addEventListener('click', async () => {
   if (!diagnosticsOutput) return;
@@ -891,11 +899,19 @@ document.querySelectorAll('.link-row').forEach((l) => {
   l.addEventListener('click', () => window.native.openExternal(l.dataset.url));
 });
 
-document.querySelectorAll('#titlebar button').forEach((b) => {
-  b.addEventListener('mousemove', (e) => {
+const pointerGlowTargets = document.querySelectorAll('#titlebar button, button, .theme-swatch, .settings-nav-item, .picker-card, .site-card, .link-row');
+pointerGlowTargets.forEach((b) => {
+  if (!b || b.dataset.glowBound === 'true') return;
+  b.dataset.glowBound = 'true';
+  b.classList.add('follow-glow');
+  b.addEventListener('pointermove', (e) => {
     const r = b.getBoundingClientRect();
     b.style.setProperty('--mx', `${e.clientX - r.left}px`);
     b.style.setProperty('--my', `${e.clientY - r.top}px`);
+  });
+  b.addEventListener('pointerleave', () => {
+    b.style.setProperty('--mx', '50%');
+    b.style.setProperty('--my', '50%');
   });
 });
 
@@ -917,17 +933,21 @@ async function refreshVolume() {
   try { setVolumeUI(await window.native.getVolumeState()); } catch {}
 }
 setVolumeUI({ volume: 100, muted: false });
-btnVolume?.addEventListener('pointerdown', async (e) => {
+function setVolumePanelOpen(open) {
+  const show = Boolean(open);
+  volumePanel?.classList.toggle('show', show);
+  btnVolume?.setAttribute('aria-expanded', String(show));
+  if (show) refreshVolume();
+}
+btnVolume?.addEventListener('pointerdown', (e) => {
   e.preventDefault();
   e.stopPropagation();
   if (!volumePanel) return;
-  const show = !volumePanel.classList.contains('show');
-  volumePanel.classList.toggle('show', show);
-  if (show) await refreshVolume();
+  setVolumePanelOpen(!volumePanel.classList.contains('show'));
 });
 volumePanel?.addEventListener('pointerdown', e => e.stopPropagation());
 document.addEventListener('pointerdown', e => {
-  if (!volumeWrap?.contains(e.target)) volumePanel?.classList.remove('show');
+  if (!volumeWrap?.contains(e.target)) setVolumePanelOpen(false);
 });
 volumeSlider?.addEventListener('input', () => {
   const target = Number(volumeSlider.value);
@@ -938,8 +958,8 @@ volumeSlider?.addEventListener('input', () => {
 volumeMinus?.addEventListener('click', () => { window.native.setVolume(-5); setTimeout(refreshVolume, 50); });
 volumePlus?.addEventListener('click', () => { window.native.setVolume(5); setTimeout(refreshVolume, 50); });
 volumeMute?.addEventListener('click', () => { window.native.toggleMute(); setTimeout(refreshVolume, 50); });
-window.native.onAlwaysOnTop?.(v => { if (alwaysOnTopToggle) alwaysOnTopToggle.checked = !!v; toast(v ? 'Поверх всех окон включено' : 'Поверх всех окон выключено'); });
-window.native.onToast?.(v => { if (v?.message) toast(v.message); });
+window.native.onAlwaysOnTop?.(v => { if (alwaysOnTopToggle) alwaysOnTopToggle.checked = !!v; toast(v ? 'Режим «Поверх всех окон» включён' : 'Режим «Поверх всех окон» выключен'); });
+window.native.onToast?.(v => { if (v?.message || v?.title) toast(v.title || v.message, v.type || 'ok', { body: v.body || '' }); });
 window.native.onMediaOverlay?.(v => { if (!mediaOverlay || !mediaOverlayText) return; mediaOverlayText.textContent = v.type === 'seek' ? `${v.value > 0 ? '+' : ''}${v.value} сек.` : `${v.muted ? 'Звук выключен' : `Громкость ${v.value}%`}`; mediaOverlay.classList.remove('show'); void mediaOverlay.offsetWidth; mediaOverlay.classList.add('show'); clearTimeout(window.__mediaOverlayTimer); window.__mediaOverlayTimer = setTimeout(() => mediaOverlay.classList.remove('show'), 850); });
 function openSettings() {
   settingsOverlay.classList.add('show');
@@ -947,401 +967,49 @@ function openSettings() {
 }
 
 
-const HOTKEYS = [
-  ['show', 'Показать приложение', 'Окно', 'Открывает окно, даже если оно скрыто.'],
-  ['toggleWindow', 'Скрыть / показать окно', 'Окно', 'Быстро прячет окно или возвращает его обратно.'],
-  ['trayMenu', 'Открыть меню трея', 'Окно', 'Открывает маленькое меню рядом с треем.'],
-  ['alwaysOnTop', 'Поверх всех окон', 'Окно', 'Оставляет AnimeOn поверх других окон.'],
-  ['fullscreen', 'Полный экран', 'Окно', 'Включает или выключает полноэкранный режим.'],
-  ['playPause', 'Пауза / продолжить', 'Плеер', 'Ставит видео на паузу или продолжает просмотр.'],
-  ['volumeUp', 'Громче', 'Плеер', 'Добавляет немного громкости.'],
-  ['volumeDown', 'Тише', 'Плеер', 'Убавляет звук.'],
-  ['mute', 'Выключить / Включить', 'Плеер', 'Выключает звук и возвращает его одним нажатием.'],
-  ['seekBack', 'Назад на 10 секунд', 'Плеер', 'Отматывает видео на десять секунд.'],
-  ['seekForward', 'Вперёд на 10 секунд', 'Плеер', 'Перематывает видео на десять секунд вперёд.'],
-  ['next', 'Следующая серия', 'Плеер', 'Переходит к следующей серии, если она есть.'],
-  ['previous', 'Предыдущая серия', 'Плеер', 'Возвращает к предыдущей серии.'],
-  ['settings', 'Открыть настройки', 'Программа', 'Открывает настройки приложения.'],
-  ['command', 'Быстрые команды', 'Программа', 'Открывает поиск по основным действиям.'],
-  ['reload', 'Перезагрузить страницу', 'Программа', 'Заново загружает текущую страницу.'],
-  ['screenshot', 'Сделать скриншот', 'Программа', 'Сохраняет снимок окна в PNG.'],
-  ['openBrowser', 'Открыть в браузере', 'Программа', 'Открывает текущую страницу обычным браузером.'],
-  ['home', 'На главную', 'Навигация', 'Возвращает на главную выбранного адреса.'],
-  ['back', 'Назад', 'Навигация', 'Переходит на предыдущую страницу.'],
-  ['forward', 'Вперёд', 'Навигация', 'Возвращает следующую страницу из истории.'],
-  ['zoomIn', 'Увеличить масштаб', 'Навигация', 'Делает страницу крупнее.'],
-  ['zoomOut', 'Уменьшить масштаб', 'Навигация', 'Делает страницу меньше.'],
-  ['zoomReset', 'Сбросить масштаб', 'Навигация', 'Возвращает обычный масштаб.'],
-  ['switchSite', 'Сменить адрес AnimeOn', 'Навигация', 'Переключает между доступными адресами AnimeOn.'],
-];
-const DEFAULT_HOTKEYS = {
-  show: 'Control+Alt+A', toggleWindow: 'Control+Alt+T', trayMenu: 'Control+Alt+Y', playPause: 'Control+Alt+P',
-  volumeUp: 'Control+Alt+Up', volumeDown: 'Control+Alt+Down', mute: 'Control+Alt+M', seekBack: 'Control+Alt+Left',
-  seekForward: 'Control+Alt+Right', next: 'Control+Alt+PageDown', previous: 'Control+Alt+PageUp',
-  fullscreen: 'Control+Alt+F', alwaysOnTop: 'Control+Alt+O', settings: 'Control+Alt+S', reload: 'Control+Alt+R',
-  screenshot: 'Control+Alt+Shift+S', command: 'Control+Alt+K', home: 'Control+Alt+H', back: 'Control+Alt+J', forward: 'Control+Alt+L', zoomIn: 'Control+Alt+=', zoomOut: 'Control+Alt+-', zoomReset: 'Control+Alt+0', switchSite: 'Control+Alt+W', openBrowser: 'Control+Alt+B'
-};
-const HOTKEY_LABELS = { Control: 'Ctrl', Command: 'Win', Alt: 'Alt', Shift: 'Shift', Up: '↑', Down: '↓', Left: '←', Right: '→', PageUp: 'PgUp', PageDown: 'PgDn', Space: 'Space' };
-let hotkeyDraft = { ...DEFAULT_HOTKEYS, ...(cfg.hotkeys || {}) };
-let recordingHotkey = null;
-let recordingCaptured = [];
+let hotkeysFeature;
+hotkeysFeature = initHotkeys({ native: window.native, cfg, toast, askConfirmation });
 
-function formatHotkey(value) {
-  if (!value) return 'Не назначено';
-  return String(value).split('+').map(x => HOTKEY_LABELS[x] || x).join(' + ');
-}
-
-function renderHotkeys() {
-  if (!hotkeysList) return;
-  hotkeysList.innerHTML = '';
-  let group = '';
-  for (const [key, name, section, description] of HOTKEYS) {
-    if (section !== group) {
-      group = section;
-      const title = document.createElement('div');
-      title.className = 'hotkeys-group-title';
-      title.textContent = section;
-      hotkeysList.appendChild(title);
-    }
-    const row = document.createElement('div');
-    row.className = 'hotkey-row editable' + (recordingHotkey === key ? ' recording' : '');
-    const textWrap = document.createElement('div');
-    textWrap.className = 'hotkey-text';
-    const text = document.createElement('b');
-    text.textContent = name;
-    const desc = document.createElement('i');
-    desc.textContent = recordingHotkey === key ? 'Нажми нужную комбинацию. Esc — отмена, Backspace — убрать.' : description;
-    textWrap.append(text, desc);
-    const value = document.createElement('kbd');
-    value.textContent = recordingHotkey === key
-      ? (recordingCaptured.length ? formatHotkey(recordingCaptured.join('+')) : 'Нажми клавиши…')
-      : formatHotkey(hotkeyDraft[key]);
-    const edit = document.createElement('button');
-    edit.className = 'hotkey-edit';
-    edit.textContent = recordingHotkey === key ? 'Отмена' : 'Изменить';
-    edit.addEventListener('click', () => {
-      if (recordingHotkey === key) stopHotkeyRecording();
-      else {
-        recordingHotkey = key;
-        recordingCaptured = [];
-        renderHotkeys();
-      }
-    });
-    row.append(textWrap, value, edit);
-    hotkeysList.appendChild(row);
-  }
-}
-
-function stopHotkeyRecording() {
-  recordingHotkey = null;
-  recordingCaptured = [];
-  renderHotkeys();
-}
-
-function hotkeyTokenFromEvent(e) {
-  const map = {
-    ' ': 'Space',
-    Escape: 'Esc',
-    ArrowUp: 'Up',
-    ArrowDown: 'Down',
-    ArrowLeft: 'Left',
-    ArrowRight: 'Right',
-    PageUp: 'PageUp',
-    PageDown: 'PageDown',
-    Enter: 'Enter',
-    Tab: 'Tab',
-    Backspace: 'Backspace',
-    Delete: 'Delete',
-    Insert: 'Insert',
-    Home: 'Home',
-    End: 'End'
-  };
-  if (['Control','Alt','Shift','Meta'].includes(e.key)) return null;
-  if (/^F([1-9]|1[0-9]|2[0-4])$/i.test(e.key)) return e.key.toUpperCase();
-  return map[e.key] || (e.key.length === 1 ? e.key.toUpperCase() : e.key);
-}
-
-function getRecordedModifiers(e) {
-  const parts = [];
-  if (e.ctrlKey) parts.push('Control');
-  if (e.altKey) parts.push('Alt');
-  if (e.shiftKey) parts.push('Shift');
-  if (e.metaKey) parts.push('Command');
-  return parts;
-}
-
-function normalizeRecordedCombo(e) {
-  const token = hotkeyTokenFromEvent(e);
-  if (!token) return '';
-  return [...getRecordedModifiers(e), token].join('+');
-}
-
-function hasHotkeyConflict(combo, currentKey) {
-  const target = String(combo).toLowerCase();
-  return HOTKEYS.some(([key]) => key !== currentKey && String(hotkeyDraft[key] || '').toLowerCase() === target);
-}
-
-async function saveRecordedHotkey(combo) {
-  const key = recordingHotkey;
-  if (!key || !combo) return;
-  if (hasHotkeyConflict(combo, key)) {
-    toast('Эта комбинация уже назначена другой команде', 'error');
-    return;
-  }
-  const previous = hotkeyDraft[key];
-  hotkeyDraft[key] = combo;
-  const result = await window.native.setHotkeys(hotkeyDraft);
-  if (result?.failed?.some(item => item.key === key)) {
-    hotkeyDraft[key] = previous;
-    await window.native.setHotkeys(hotkeyDraft);
-    toast(`Не удалось назначить ${formatHotkey(combo)}`, 'error');
-    renderHotkeys();
-    return;
-  }
-  cfg.hotkeys = { ...hotkeyDraft };
-  recordingHotkey = null;
-  recordingCaptured = [];
-  renderHotkeys();
-  toast(`Хоткей изменён: ${formatHotkey(combo)}`);
-}
-
-window.addEventListener('keydown', async e => {
-  if (!recordingHotkey) return;
-  e.preventDefault();
-  e.stopPropagation();
-  if (e.key === 'Escape') {
-    stopHotkeyRecording();
-    return;
-  }
-  if (e.key === 'Backspace' || e.key === 'Delete') {
-    const key = recordingHotkey;
-    const previous = hotkeyDraft[key];
-    delete hotkeyDraft[key];
-    const result = await window.native.setHotkeys(hotkeyDraft);
-    if (result?.failed?.length) {
-      hotkeyDraft[key] = previous;
-      await window.native.setHotkeys(hotkeyDraft);
-      toast('Не удалось отключить хоткей', 'error');
-      renderHotkeys();
-      return;
-    }
-    cfg.hotkeys = { ...hotkeyDraft };
-    recordingHotkey = null;
-    recordingCaptured = [];
-    renderHotkeys();
-    toast('Хоткей отключён');
-    return;
-  }
-  const combo = normalizeRecordedCombo(e);
-  if (!combo) return;
-  recordingCaptured = combo.split('+');
-  renderHotkeys();
-  await saveRecordedHotkey(combo);
-}, true);
-
-function openHotkeys() {
-  stopHotkeyRecording();
-  renderHotkeys();
-  hotkeysModal?.classList.add('show');
-}
-function closeHotkeys() {
-  stopHotkeyRecording();
-  hotkeysModal?.classList.remove('show');
-}
-
-btnHotkeys?.addEventListener('click', openHotkeys);
-btnHotkeysMain?.addEventListener('click', openHotkeys);
-btnCloseHotkeys?.addEventListener('click', closeHotkeys);
-btnHotkeysReset?.addEventListener('click', async () => {
-  if (!confirm('Сбросить все горячие клавиши к значениям по умолчанию?')) return;
-  const previous = { ...hotkeyDraft };
-  hotkeyDraft = { ...DEFAULT_HOTKEYS };
-  const result = await window.native.setHotkeys(hotkeyDraft);
-  if (result?.failed?.length) {
-    hotkeyDraft = previous;
-    await window.native.setHotkeys(previous);
-    toast('Не удалось сбросить горячие клавиши', 'error');
-    renderHotkeys();
-    return;
-  }
-  cfg.hotkeys = { ...hotkeyDraft };
-  stopHotkeyRecording();
-  renderHotkeys();
-  toast('Горячие клавиши сброшены');
-});
-hotkeysModal?.addEventListener('click', (e) => {
-  if (e.target === hotkeysModal) closeHotkeys();
-});
-
-let screenshotsLoadToken = 0;
-
-function formatScreenshotDate(mtimeMs) {
-  try {
-    return new Date(mtimeMs).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-  } catch { return ''; }
-}
-function formatScreenshotSize(bytes) {
-  const n = Number(bytes);
-  if (!Number.isFinite(n)) return '';
-  const kb = n / 1024;
-  return kb < 1024 ? `${kb.toFixed(0)} КБ` : `${(kb / 1024).toFixed(1)} МБ`;
-}
-
-async function renderScreenshots() {
-  if (!screenshotsList) return;
-  const token = ++screenshotsLoadToken;
-  screenshotsList.innerHTML = '';
-  if (screenshotsCount) screenshotsCount.textContent = 'Загрузка…';
-  const res = await window.native.listScreenshots?.();
-  if (token !== screenshotsLoadToken) return;
-  if (!res || !res.ok) {
-    if (screenshotsCount) screenshotsCount.textContent = 'Не удалось получить список скриншотов';
-    return;
-  }
-  const items = res.items || [];
-  if (screenshotsCount) {
-    screenshotsCount.textContent = items.length ? `Скриншотов: ${items.length}` : 'Пока нет ни одного скриншота';
-  }
-  if (!items.length) {
-    const empty = document.createElement('div');
-    empty.className = 'screenshots-empty';
-    empty.textContent = 'Здесь появятся ваши скриншоты';
-    screenshotsList.appendChild(empty);
-    return;
-  }
-  for (const item of items) {
-    const card = document.createElement('div');
-    card.className = 'screenshot-card';
-
-    const thumbWrap = document.createElement('div');
-    thumbWrap.className = 'screenshot-thumb';
-    const spinner = document.createElement('div');
-    spinner.className = 'screenshot-thumb-loading';
-    thumbWrap.appendChild(spinner);
-    card.appendChild(thumbWrap);
-
-    const meta = document.createElement('div');
-    meta.className = 'screenshot-meta';
-    const nameEl = document.createElement('b');
-    nameEl.textContent = item.name;
-    nameEl.title = item.name;
-    const infoEl = document.createElement('i');
-    infoEl.textContent = `${formatScreenshotDate(item.mtimeMs)} · ${formatScreenshotSize(item.size)}`;
-    meta.appendChild(nameEl);
-    meta.appendChild(infoEl);
-    card.appendChild(meta);
-
-    const actions = document.createElement('div');
-    actions.className = 'screenshot-actions';
-    const mkBtn = (label, cls, handler) => {
-      const b = document.createElement('button');
-      b.type = 'button';
-      b.className = cls ? `ghost-btn ${cls}` : 'ghost-btn';
-      b.textContent = label;
-      b.addEventListener('click', handler);
-      return b;
-    };
-    actions.appendChild(mkBtn('Открыть', '', async () => {
-      const r = await window.native.openScreenshot(item.path);
-      if (!r?.ok) toast('Не удалось открыть скриншот', 'error');
-    }));
-    actions.appendChild(mkBtn('Скопировать', '', async () => {
-      const r = await window.native.copyScreenshot(item.path);
-      toast(r?.ok ? 'Скопировано в буфер' : 'Не удалось скопировать', r?.ok ? 'ok' : 'error');
-    }));
-    actions.appendChild(mkBtn('В папке', '', async () => {
-      const r = await window.native.showScreenshotInFolder(item.path);
-      if (!r?.ok) toast('Не удалось открыть папку', 'error');
-    }));
-    actions.appendChild(mkBtn('Удалить', 'danger', async () => {
-      const r = await window.native.deleteScreenshot(item.path);
-      if (r?.ok) { toast('Скриншот удалён'); renderScreenshots(); }
-      else toast('Не удалось удалить', 'error');
-    }));
-    card.appendChild(actions);
-    screenshotsList.appendChild(card);
-
-    window.native.getScreenshotThumb?.(item.path).then((r) => {
-      if (token !== screenshotsLoadToken || !r?.ok || !r.dataUrl) return;
-      thumbWrap.innerHTML = '';
-      const img = document.createElement('img');
-      img.src = r.dataUrl;
-      img.alt = item.name;
-      thumbWrap.appendChild(img);
-    }).catch(() => {});
-  }
-}
-
-function openScreenshots() {
-  screenshotsModal?.classList.add('show');
-  renderScreenshots();
-}
-function closeScreenshots() {
-  screenshotsModal?.classList.remove('show');
-}
-
-btnScreenshotsMain?.addEventListener('click', openScreenshots);
-btnCloseScreenshots?.addEventListener('click', closeScreenshots);
-btnScreenshotsOpenFolder?.addEventListener('click', () => window.native.openScreenshotsFolder?.());
-screenshotsModal?.addEventListener('click', (e) => {
-  if (e.target === screenshotsModal) closeScreenshots();
-});
-window.native.onScreenshotsChanged?.(() => {
-  if (screenshotsModal?.classList.contains('show')) renderScreenshots();
-});
-
+const { openScreenshots, closeScreenshots } = initScreenshots({ native: window.native, toast });
 
 function initSettingsNavigation() {
-  const nav=document.getElementById('settings-nav');
-  if(!nav) return;
-  const viewport=nav.querySelector('.settings-nav-viewport');
-  const prev=nav.querySelector('[data-settings-scroll=prev]');
-  const next=nav.querySelector('[data-settings-scroll=next]');
-  const items=()=>Array.from(nav.querySelectorAll('.settings-nav-item'));
-  const scrollByPage=(dir)=>{ if(!viewport) return; viewport.scrollBy({left:dir*Math.max(220,viewport.clientWidth*.72),behavior:'smooth'}); };
-  prev?.addEventListener('click',()=>scrollByPage(-1));
-  next?.addEventListener('click',()=>scrollByPage(1));
-  const updateArrows=()=>{
-    if(!viewport) return;
-    prev?.toggleAttribute('disabled',viewport.scrollLeft<=2);
-    next?.toggleAttribute('disabled',viewport.scrollLeft+viewport.clientWidth>=viewport.scrollWidth-2);
-  };
-  viewport?.addEventListener('scroll',updateArrows,{passive:true});
-  viewport?.addEventListener('wheel', (e)=>{
-    if(Math.abs(e.deltaY) > Math.abs(e.deltaX)){
-      e.preventDefault();
-      viewport.scrollLeft += e.deltaY;
-    }
-  }, {passive:false});
-  window.addEventListener('resize',updateArrows);
-  items().forEach(btn=>btn.addEventListener('click',()=>{
+  const discordSection = document.getElementById('discord-status-section');
+  const networkSection = document.querySelector('.settings-group-card[data-settings-group="network"]');
+  if (discordSection && networkSection) networkSection.after(discordSection);
+  const items=()=>Array.from(document.querySelectorAll('#settings-nav-list .settings-nav-item'));
+  const content=document.getElementById('st-content');
+  if(!items().length) return;
+  const applyFilter=()=>{
+    const btn=items().find(x=>x.classList.contains('active'))||items()[0];
     const filter=btn.dataset.settingsFilter || 'all';
+    const q=(document.getElementById('settings-search')?.value||'').trim().toLowerCase();
+    document.querySelectorAll('.settings-group-card').forEach(section=>{
+      const okF=filter==='all'||!!q||section.dataset.settingsGroup===filter;
+      const okQ=!q||section.textContent.toLowerCase().includes(q);
+      const visible=okF&&okQ;
+      section.classList.toggle('is-hidden',!visible);
+      if(visible) section.style.removeProperty('display');
+      else section.style.setProperty('display','none','important');
+    });
+    if(content)content.scrollTop=0;
+  };
+  window.__applySettingsFilter = applyFilter;
+  items().forEach(btn=>btn.addEventListener('click',()=>{
     items().forEach(x=>x.classList.toggle('active',x===btn));
-    document.querySelectorAll('.settings-group-card').forEach(section=>section.classList.toggle('is-hidden',filter!=='all' && section.dataset.settingsGroup!==filter));
-    if(viewport){ const left=btn.offsetLeft, right=left+btn.offsetWidth, viewLeft=viewport.scrollLeft, viewRight=viewLeft+viewport.clientWidth; if(left<viewLeft) viewport.scrollTo({left:Math.max(0,left-10),behavior:'smooth'}); else if(right>viewRight) viewport.scrollTo({left:Math.max(0,right-viewport.clientWidth+10),behavior:'smooth'}); }
-    requestAnimationFrame(updateArrows);
+    applyFilter();
   }));
-  updateArrows();
+  document.getElementById('settings-search')?.addEventListener('input',applyFilter);
+  applyFilter();
 }
 initSettingsNavigation();
 const settingsSearch=document.getElementById('settings-search');
-if(settingsSearch){
-  settingsSearch.addEventListener('input',()=>{
-    const q=settingsSearch.value.trim().toLowerCase();
-    document.querySelectorAll('.settings-group-card').forEach(card=>{
-      if(!q){card.classList.remove('search-hidden');return;}
-      const text=card.textContent.toLowerCase();
-      card.classList.toggle('search-hidden',!text.includes(q));
-    });
-  });
-}
 if (resumeToggle) { resumeToggle.checked = cfg.resumeEnabled !== false; resumeToggle.addEventListener('change',()=>store('resumeEnabled',resumeToggle.checked)); }
 const saveTabsToggle=document.getElementById('save-tabs-toggle');
 const restoreLastToggle=document.getElementById('restore-last-toggle');
 if(saveTabsToggle){ saveTabsToggle.checked=cfg.saveTabs!==false; saveTabsToggle.addEventListener('change',()=>store('saveTabs',saveTabsToggle.checked)); }
 if(restoreLastToggle){ restoreLastToggle.checked=cfg.restoreLastTab!==false; restoreLastToggle.addEventListener('change',()=>store('restoreLastTab',restoreLastToggle.checked)); }
 document.getElementById('btn-clear-tabs')?.addEventListener('click',async()=>{
-  if(!confirm('Очистить все вкладки? Останется только стартовая.')) return;
+  if(!await askConfirmation('Очистить все вкладки? Останется только стартовая.', 'Очистить вкладки')) return;
   pageTabs=[{url:SITES[store('site')||'co']?.url||SITES.co.url, title:SITES[store('site')||'co']?.label||'AnimeOn'}];
   activeTab=0;
   if(tabWebviews[0] && tabWebviews[0]!==firstWebview) try{tabWebviews[0].remove()}catch{}
@@ -1355,6 +1023,8 @@ document.getElementById('btn-clear-tabs')?.addEventListener('click',async()=>{
 if (autoNextToggle) { autoNextToggle.checked = !!cfg.autoNext; autoNextToggle.addEventListener('change',()=>store('autoNext',autoNextToggle.checked)); }
 if (dndToggle) { dndToggle.checked = !!cfg.doNotDisturb; dndToggle.addEventListener('change',()=>{store('doNotDisturb',dndToggle.checked);updateDndButton();}); }
 if (notifyAdvancedToggle) { notifyAdvancedToggle.checked = !!cfg.notify; notifyAdvancedToggle.addEventListener('change',()=>store('notify',notifyAdvancedToggle.checked)); }
+if (smoothScrollToggle) smoothScrollToggle.checked = cfg.smoothSite !== false;
+if (siteScrollbarsToggle) siteScrollbarsToggle.checked = !!cfg.showSiteScrollbars;
 if (memorySaverToggle) { memorySaverToggle.checked = !!cfg.memorySaver; memorySaverToggle.addEventListener('change',()=>window.native.setMemorySaver(memorySaverToggle.checked)); }
 if (cacheAutoToggle) { cacheAutoToggle.checked = cfg.autoCacheCleanup !== false; cacheAutoToggle.addEventListener('change',()=>window.native.cacheSettings({auto:cacheAutoToggle.checked,limitMB:Number(cacheLimit?.value)||512})); }
 if (cacheLimit) { cacheLimit.value = String(Number(cfg.cacheLimitMB)||512); cacheLimit.addEventListener('change',()=>{let v=Number(cacheLimit.value)||512;v=Math.max(64,Math.min(16384,v));cacheLimit.value=String(v);window.native.cacheSettings({auto:cacheAutoToggle?.checked!==false,limitMB:v});}); }
@@ -1363,12 +1033,77 @@ document.getElementById('btn-cache-refresh')?.addEventListener('click',refreshCa
 document.getElementById('btn-cache-clean')?.addEventListener('click',async()=>{const r=await window.native.clearCache();toast(r?.ok?'Кэш очищен':'Не удалось очистить кэш',r?.ok?'ok':'error');refreshCacheInfo();});
 document.getElementById('btn-network-check')?.addEventListener('click',()=>btnConnectionCheck?.click());
 document.getElementById('btn-network-open-log')?.addEventListener('click',async()=>{const r=await window.native.openLogs();if(!r?.ok)toast('Не удалось открыть журнал','error');});
+function initCSelect(id, onChange) {
+  const root = document.getElementById(id);
+  if (!root) return null;
+  const btn = root.querySelector('.cselect-btn');
+  const label = btn.querySelector('.cselect-label');
+  const list = root.querySelector('.cselect-list');
+  function pick(value) {
+    root.dataset.value = value;
+    list.querySelectorAll('button[data-value]').forEach((b) => b.classList.toggle('sel', b.dataset.value === value));
+    const cur = list.querySelector('button[data-value="' + value + '"] .cselect-t b') || list.querySelector('button[data-value="' + value + '"]');
+    if (cur) { label.textContent = cur.textContent; label.classList.remove('dim'); }
+    if (onChange) onChange(value);
+  }
+  btn.addEventListener('click', (e) => { e.stopPropagation(); root.classList.toggle('open'); list.hidden = !root.classList.contains('open'); });
+  list.addEventListener('click', (e) => { const b = e.target.closest('button[data-value]'); if (!b) return; pick(b.dataset.value); root.classList.remove('open'); list.hidden = true; });
+  document.addEventListener('click', (e) => { if (!root.contains(e.target)) { root.classList.remove('open'); list.hidden = true; } });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { root.classList.remove('open'); list.hidden = true; } });
+  return { pick, root, get value() { return root.dataset.value; } };
+}
+if (autoMirrorToggle) { autoMirrorToggle.checked = cfg.autoMirror !== false; autoMirrorToggle.addEventListener('change',()=>window.native.netSettingsSet({autoMirror:autoMirrorToggle.checked})); }
+const proxySelect = initCSelect('proxy-select', (v) => { const row = document.getElementById('proxy-custom-row'); if (row) row.hidden = v !== 'custom'; });
+if (proxySelect) proxySelect.pick(cfg.network?.mode || 'system');
+if (dohToggle) { dohToggle.checked = !!cfg.network?.doh; dohToggle.addEventListener('change',()=>{}); }
+if (proxyHost) proxyHost.value = cfg.network?.host || '';
+if (proxyUser) proxyUser.value = cfg.network?.user || '';
+if (proxyPass) proxyPass.value = cfg.network?.pass || '';
+function parseProxyEndpointInput(value) {
+  const match = String(value || '').trim().match(/^(?:\[([0-9a-f:.]+)\]|([a-z\d.-]+)):(\d{1,5})$/i);
+  if (!match) return null;
+  const host = match[1] ? `[${match[1]}]` : match[2];
+  const port = Number(match[3]);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) return null;
+  if (!match[1] && host.split('.').some((label) => !label || label.length > 63 || !/^[a-z\d](?:[a-z\d-]*[a-z\d])?$/i.test(label))) return null;
+  try {
+    const parsed = new URL(`http://${host}:${port}`);
+    if (parsed.port !== String(port)) return null;
+  } catch { return null; }
+  return { host, port };
+}
+function proxyFormPatch(){ const endpoint=parseProxyEndpointInput(proxyHost?.value); return { mode: proxySelect ? proxySelect.root.dataset.value : 'system', host:endpoint?.host||String(proxyHost?.value||'').trim(), port:endpoint?.port||0, user:proxyUser?.value||'', pass:proxyPass?.value||'' }; }
+btnNetApply?.addEventListener('click',async()=>{const patch={}; if (autoMirrorToggle) patch.autoMirror=autoMirrorToggle.checked; patch.proxy=proxyFormPatch(); patch.doh=!!dohToggle?.checked; const r=await window.native.netSettingsSet(patch); toast(r?.ok?'Настройки сети применены':r?.error||'Ошибка применения',r?.ok?'ok':'error'); if(r?.ok) loadNetStatus(); });
+const btnProxyCheck = document.getElementById('btn-proxy-check');
+const proxyStatus = document.getElementById('proxy-status');
+btnProxyCheck?.addEventListener('click', async () => {
+  btnProxyCheck.disabled = true;
+  if (proxyStatus) { proxyStatus.textContent = 'Проверяю…'; proxyStatus.className = 'st-hint'; }
+  try {
+    const mode = proxySelect ? proxySelect.root.dataset.value : 'system';
+    const raw = (proxyHost?.value || '').trim();
+    const endpoint = parseProxyEndpointInput(raw);
+    if (mode === 'custom' && !endpoint) throw new Error('Неверный адрес. Введи host:port, порт от 1 до 65535');
+    const patch = { proxy: proxyFormPatch(), doh: !!dohToggle?.checked };
+    if (autoMirrorToggle) patch.autoMirror = autoMirrorToggle.checked;
+    const saved = await window.native.netSettingsSet(patch);
+    if (!saved?.ok) throw new Error(saved?.error || 'Не удалось применить настройки');
+    const r = await window.native.checkProxy();
+    if (proxyStatus) {
+      if (r?.ok) { proxyStatus.textContent = `${mode === 'custom' ? `${endpoint.host}:${endpoint.port}` : mode === 'direct' ? 'прямое соединение' : 'системный прокси'} доступен · ${r.ms} мс`; proxyStatus.className = 'st-hint pv-ok'; }
+      else { proxyStatus.textContent = `${r?.error || 'Проверка не пройдена'}${r?.status ? ` · HTTP ${r.status}` : ''}`; proxyStatus.className = 'st-hint pv-err'; }
+    }
+  } catch (e) { if (proxyStatus) { proxyStatus.textContent = String(e?.message || e); proxyStatus.className = 'st-hint pv-err'; } }
+  btnProxyCheck.disabled = false;
+});
+async function loadNetStatus(){ try { const r=await window.native.netHealth(); if(r?.ok && r.results){ netMirrorList.textContent=r.results.map(x=>`${x.label}: ${x.ok?'✓':'✗'} ${x.status?`HTTP ${x.status} `:''}${x.ms}ms`).join('\n'); } } catch {} }
+document.getElementById('btn-network-check')?.addEventListener('click',async()=>{btnConnectionCheck.disabled=true; if(netMirrorList) netMirrorList.textContent='Проверяю сайты…'; const r=await window.native.netHealth(); btnConnectionCheck.disabled=false; if(r?.ok && r.results){ netMirrorList.textContent=r.results.map(x=>`${x.label}: ${x.ok?'✓':'✗'} ${x.status?`HTTP ${x.status} `:''}${x.ms}ms`).join('\n'); toast(r.internet?'Сайты проверены':'Есть недоступные сайты',r.internet?'ok':'error'); } });
 document.getElementById('btn-open-log')?.addEventListener('click',async()=>{const r=await window.native.openLogs();if(!r?.ok)toast('Не удалось открыть журнал','error');});
 document.getElementById('btn-copy-log')?.addEventListener('click',async()=>{const r=await window.native.copyLogs();toast(r?.ok?'Журнал скопирован':'Не удалось скопировать журнал',r?.ok?'ok':'error');});
-document.getElementById('btn-clear-log')?.addEventListener('click',async()=>{if(confirm('Очистить журнал ошибок?')){const r=await window.native.clearLogs();toast(r?.ok?'Журнал очищен':'Не удалось очистить журнал',r?.ok?'ok':'error');}});
+document.getElementById('btn-clear-log')?.addEventListener('click',async()=>{if(await askConfirmation('Очистить журнал ошибок?', 'Очистить журнал')){const r=await window.native.clearLogs();toast(r?.ok?'Журнал очищен':'Не удалось очистить журнал',r?.ok?'ok':'error');}});
 document.getElementById('btn-screenshots-open-settings')?.addEventListener('click',openScreenshots);
 document.getElementById('btn-screenshots-folder-settings')?.addEventListener('click',()=>window.native.openScreenshotsFolder());
-document.getElementById('btn-about-check-update')?.addEventListener('click',async()=>{const r=await window.native.checkUpdate();toast(r?.available?'Доступно обновление':'Обновлений нет',r?.available?'ok':'ok');});
+document.getElementById('btn-about-check-update')?.addEventListener('click',async()=>{const r=await window.native.checkUpdate();if(r?.hasUpdate)toast('Вышла новая версия','ok',{body:`v${r.latest} — нажмите, чтобы скачать`,duration:8000,action:{icon:'go',title:'Открыть окно обновления',onClick:()=>window.native.updOpen()}});else if(r?.ok)toast('Обновлений нет');else toast(`Не удалось проверить: ${r?.reason||'неизвестная ошибка'}`,'error');});
 document.getElementById('btn-about-source')?.addEventListener('click',()=>window.native.openExternal('https://github.com/Neukluziy/animeon-desktop'));
 document.getElementById('btn-reset-positions')?.addEventListener('click',()=>{store('playbackPositions',{});toast('Позиции просмотра очищены');});
 document.getElementById('btn-sleep-timer')?.addEventListener('click',async()=>{const raw=prompt('Через сколько минут остановить видео? Введите 0 для отключения.',String(cfg.sleepTimer?.minutes||0));if(raw===null)return;const m=Math.max(0,Number(raw)||0);const action=m?(prompt('Действие: pause — остановить видео, tray — убрать в трей, exit — закрыть приложение.',cfg.sleepTimer?.action||'pause')||'pause'):'pause';const r=await window.native.setSleepTimer(m,action);toast(r?.enabled?`Таймер установлен на ${m} мин.`:'Таймер сна отключён');});
@@ -1384,40 +1119,14 @@ window.native.onFindOpen?.(openFind);
 closeFind();
 setTimeout(closeFind, 0);
 let pageTabs=[]; let activeTab=0;
-function tabTitle(item){return String(item?.title||item?.url||'Новая страница').replace(/^AnimeOn\s*[—-]\s*/i,'').slice(0,48);}
-function renderTabs(){
-  if(!tabsBar)return;
-  tabsBar.innerHTML='';
-  pageTabs.forEach((tab,i)=>{
-    const b=document.createElement('button');
-    b.className='tab-item'+(i===activeTab?' active':'');
-    b.title=tabTitle(tab);
-    const span=document.createElement('span');
-    span.textContent=tabTitle(tab);
-    const close=document.createElement('span');
-    close.className='tab-close';
-    close.setAttribute('role','button');
-    close.setAttribute('aria-label','Закрыть вкладку');
-    close.textContent='×';
-    close.addEventListener('click',e=>{
-      e.stopPropagation();
-      closeTab(i);
-    });
-    b.append(span,close);
-    b.addEventListener('click',(e)=>{
-      if(e.target.closest('.tab-close')) return;
-      if(i===activeTab){
-        try{ activeWebview.focus(); }catch{}
-        try{ wv.reload(); }catch{}
-        return;
-      }
-      switchTab(i);
-    });
-    b.style.pointerEvents='auto';
-    b.style.cursor='pointer';
-    tabsBar.appendChild(b);
-  });
-}
+const { tabTitle, toggleTabsSidebar, renderTabs } = initTabsView({
+  getPageTabs: () => pageTabs,
+  getActiveTab: () => activeTab,
+  getActiveWebview: () => activeWebview,
+  webview: wv,
+  switchTab,
+  closeTab,
+});
 async function saveTabs(){await window.native.tabsSet(pageTabs,activeTab);renderTabs();}
 function updateSiteFromUrl(url){
   const value=String(url||'').toLowerCase();
@@ -1452,7 +1161,7 @@ function normalizeTabUrl(url){
   }catch{return String(url||'');}
 }
 
-async function syncFavoriteButton(){try{const url=activeWebview?.getURL?.()||'';if(!url)return;const r=await window.native.pageFavorites();const found=(r?.items||[]).some(x=>samePageUrl(typeof x==='string'?x:x?.url, url));const icon=btnPageFavorite?.querySelector('.page-action-icon');if(icon) icon.innerHTML=found?'★':'<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M6 4.5A2.5 2.5 0 0 1 8.5 2h7A2.5 2.5 0 0 1 18 4.5V21l-6-3.5L6 21V4.5Z\"/></svg>';}catch{}}
+let syncFavoriteButton = () => {};
 function syncActiveTabFromWebview(){
   if(!pageTabs.length || !activeWebview) return;
   let url='';
@@ -1520,7 +1229,8 @@ function updateDndButton(){
   const enabled=!!cfg.doNotDisturb;
   btnDnd.classList.toggle('active',enabled);
   btnDnd.setAttribute('aria-pressed',enabled?'true':'false');
-  btnDnd.title=enabled?'Не беспокоить: включено':'Не беспокоить: выключено';
+  btnDnd.title=enabled?'Уведомления приостановлены':'Уведомления включены';
+  btnDnd.setAttribute('aria-label', enabled ? 'Возобновить уведомления' : 'Приостановить уведомления');
   btnDnd.innerHTML=enabled
     ? '<span class="dnd-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/><path d="M4 4l16 16"/></svg></span>'
     : '<span class="dnd-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></svg></span>';
@@ -1532,231 +1242,38 @@ btnDnd?.addEventListener('click',async()=>{
     if(!r?.ok)throw new Error('dnd');
     cfg.doNotDisturb=enabled;
     updateDndButton();
-    toast(enabled?'Не беспокоить включён':'Не беспокоить выключен');
-  }catch{toast('Не удалось изменить режим «Не беспокоить»','error');}
+    toast(enabled?'Уведомления приостановлены':'Уведомления снова включены');
+  }catch{toast('Не удалось изменить настройки уведомлений','error');}
 });
 updateDndButton();
 
-let recentPagesCache=[]; let favoritePagesCache=[];
-const pagesSearch=document.getElementById('pages-search');
-const favoritesSearch=document.getElementById('favorites-search');
-function filterPages(items, query){
-  if(!query) return items;
-  const q=String(query).toLowerCase();
-  return items.filter(it=>{
-    const d=typeof it==='string'?{url:it,title:it}:it;
-    return String(d.title||'').toLowerCase().includes(q) || String(d.url||'').toLowerCase().includes(q);
-  });
-}
-async function openPages(){
-  pagesModal?.classList.add('show');
-  if(pagesSearch){ pagesSearch.value=''; }
-  try {
-    const r=await window.native.recentPages();
-    recentPagesCache=r?.items||[];
-    renderPageList(recentPagesList,recentPagesCache);
-  } catch { recentPagesCache=[]; renderPageList(recentPagesList,[]); }
-}
-async function openFavorites(){
-  favoritesModal?.classList.add('show');
-  if(favoritesSearch){ favoritesSearch.value=''; }
-  try {
-    const f=await window.native.pageFavorites();
-    favoritePagesCache=f?.items||[];
-    renderPageList(favoritePagesList,favoritePagesCache);
-    const url=activeWebview?.getURL?.()||'';
-    const found=(favoritePagesCache||[]).some(x=>samePageUrl(typeof x==='string'?x:x?.url,url));
-    const icon=btnPageFavorite?.querySelector('.page-action-icon');
-    if(icon) icon.innerHTML=found?'★':'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4.5A2.5 2.5 0 0 1 8.5 2h7A2.5 2.5 0 0 1 18 4.5V21l-6-3.5L6 21V4.5Z"/></svg>';
-  } catch { favoritePagesCache=[]; renderPageList(favoritePagesList,[]); }
-}
-function renderPageList(root,items){
-  if(!root) return;
-  root.innerHTML='';
-  const list=Array.isArray(items)?items:[];
-  if(!list.length){ root.innerHTML='<div class="st-hint pages-empty">Пока пусто</div>'; return; }
-  const isRecent = root===recentPagesList;
-  const isFav = root===favoritePagesList;
-  const selectMode = isRecent ? pagesSelectMode : (isFav ? favSelectMode : false);
-  const selectedSet = isRecent ? pagesSelected : (isFav ? favSelected : new Set());
-  const toShow=list.slice(0,80);
-  toShow.forEach(item=>{
-    const data=typeof item==='string'?{url:item,title:item}:item;
-    const urlKey=String(data.url||'');
-    const b=document.createElement('div');
-    b.className='page-list-item'+(selectMode?' select-mode':'');
-    const check=document.createElement('input');
-    check.type='checkbox';
-    check.className='page-list-check';
-    check.checked=selectedSet.has(urlKey);
-    check.addEventListener('click', (e)=>{ e.stopPropagation(); if(check.checked) selectedSet.add(urlKey); else selectedSet.delete(urlKey); if(isRecent) updatePagesSelectUI(); else updateFavSelectUI(); });
-    b.appendChild(check);
-    const main=document.createElement('button');
-    main.className='page-list-main';
-    main.style.cssText='flex:1; background:transparent; border:0; text-align:left; cursor:pointer;';
-    const title=document.createElement('strong'); title.className='page-list-title'; title.textContent=tabTitle(data);
-    const urlEl=document.createElement('small'); urlEl.className='page-list-url'; urlEl.textContent=urlKey;
-    main.append(title,urlEl);
-    main.addEventListener('click',()=>{
-      if(selectMode){
-        if(selectedSet.has(urlKey)) selectedSet.delete(urlKey); else selectedSet.add(urlKey);
-        check.checked=selectedSet.has(urlKey);
-        if(isRecent) updatePagesSelectUI(); else updateFavSelectUI();
-        return;
-      }
-      if(!pageTabs.length) pageTabs=[{url:data.url,title:data.title||data.url}];
-      pageTabs[activeTab]={url:data.url,title:data.title||tabTitle(data)};
-      if(!tabWebviews[activeTab]) createTabWebview(activeTab);
-      showTabWebview(activeTab);
-      loadTabUrl(activeWebview,data.url);
-      renderTabs(); saveTabs(); syncFavoriteButton();
-      pagesModal?.classList.remove('show'); favoritesModal?.classList.remove('show');
-    });
-    b.appendChild(main);
-    const del=document.createElement('button');
-    del.className='page-list-delete';
-    del.title='Удалить';
-    del.textContent='×';
-    del.addEventListener('click', async (e)=>{
-      e.stopPropagation();
-      if(!confirm('Удалить "'+tabTitle(data)+'"?')) return;
-      const targetUrl=urlKey;
-      try{
-        if(isRecent){
-          try{ await window.native.recentPagesRemove?.(targetUrl); }catch{}
-          recentPagesCache=recentPagesCache.filter(it=>{ const u=typeof it==='string'?it:it.url; return u!==targetUrl && !samePageUrl(u,targetUrl); });
-          renderPageList(recentPagesList, filterPages(recentPagesCache, pagesSearch?.value||''));
-        } else {
-          try{ await window.native.togglePageFavorite({url:targetUrl}); }catch{}
-          try{ await window.native.pageFavoriteRemove?.(targetUrl); }catch{}
-          favoritePagesCache=favoritePagesCache.filter(it=>{ const u=typeof it==='string'?it:it.url; return u!==targetUrl && !samePageUrl(u,targetUrl); });
-          renderPageList(favoritePagesList, filterPages(favoritePagesCache, favoritesSearch?.value||''));
-          syncFavoriteButton();
-        }
-        toast('Удалено');
-      }catch{ toast('Не удалось удалить','error'); }
-    });
-    b.appendChild(del);
-    const arrow=document.createElement('span'); arrow.className='page-list-arrow'; arrow.textContent='›';
-    arrow.style.cursor='pointer';
-    arrow.addEventListener('click', (e)=>{
-      e.stopPropagation();
-      if(selectMode) return;
-      if(!pageTabs.length) pageTabs=[{url:data.url,title:data.title||data.url}];
-      pageTabs[activeTab]={url:data.url,title:data.title||tabTitle(data)};
-      if(!tabWebviews[activeTab]) createTabWebview(activeTab);
-      showTabWebview(activeTab);
-      loadTabUrl(activeWebview,data.url);
-      renderTabs(); saveTabs(); syncFavoriteButton();
-      pagesModal?.classList.remove('show'); favoritesModal?.classList.remove('show');
-    });
-    b.appendChild(arrow);
-    root.appendChild(b);
-  });
-}
-pagesSearch?.addEventListener('input',()=>{ renderPageList(recentPagesList, filterPages(recentPagesCache, pagesSearch.value)); });
-favoritesSearch?.addEventListener('input',()=>{ renderPageList(favoritePagesList, filterPages(favoritePagesCache, favoritesSearch.value)); });
+const pageTabContext = {
+  get pageTabs() { return pageTabs; },
+  set pageTabs(value) { pageTabs = value; },
+  get activeTab() { return activeTab; },
+  set activeTab(value) { activeTab = value; },
+  get activeWebview() { return activeWebview; },
+  get currentSite() { return currentSite; },
+  get tabWebviews() { return tabWebviews; },
+  get firstWebview() { return firstWebview; },
+  sites: SITES,
+  createTabWebview,
+  showTabWebview,
+  loadTabUrl,
+  renderTabs,
+  saveTabs,
+  syncActiveTabFromWebview,
+};
+const pageFeature = initPageLibrary({
+  native: window.native, cfg, toast, askConfirmation, store, tabTitle, samePageUrl, isAnimeOnUrl,
+  tabs: pageTabContext,
+});
+syncFavoriteButton = pageFeature.syncFavoriteButton;
+btnCloseWatchNotes?.addEventListener('click', () => watchNotesModal?.classList.remove('show'));
+watchNotesModal?.addEventListener('click', (event) => {
+  if (event.target === watchNotesModal) watchNotesModal.classList.remove('show');
+});
 
-let pagesSelectMode=false, pagesSelected=new Set();
-let favSelectMode=false, favSelected=new Set();
-const pagesSelectToggle=document.getElementById('pages-select-toggle');
-const pagesDeleteBtn=document.getElementById('pages-delete-selected');
-const pagesCancelBtn=document.getElementById('pages-cancel-select');
-const pagesCountEl=document.getElementById('pages-selected-count');
-const favSelectToggle=document.getElementById('favorites-select-toggle');
-const favDeleteBtn=document.getElementById('favorites-delete-selected');
-const favCancelBtn=document.getElementById('favorites-cancel-select');
-const favCountEl=document.getElementById('favorites-selected-count');
-function updatePagesSelectUI(){
-  if(!pagesSelectToggle) return;
-  pagesSelectToggle.textContent=pagesSelectMode?'Готово':'Выбрать';
-  const hasSel=pagesSelectMode && pagesSelected.size>0;
-  pagesSelectToggle.classList.toggle('hidden-btn',pagesSelectMode && hasSel);
-  pagesSelectToggle.style.display=pagesSelectMode && hasSel?'none':'inline-flex';
-  if(pagesDeleteBtn){pagesDeleteBtn.classList.toggle('hidden-btn',!hasSel);pagesDeleteBtn.style.display=hasSel?'inline-flex':'none';}
-  if(pagesCancelBtn){pagesCancelBtn.classList.toggle('hidden-btn',!hasSel);pagesCancelBtn.style.display=hasSel?'inline-flex':'none';}
-  if(pagesCountEl) pagesCountEl.textContent=String(pagesSelected.size);
-  document.querySelectorAll('#recent-pages-list .page-list-item').forEach(el=>el.classList.toggle('select-mode', pagesSelectMode));
-  document.querySelectorAll('#recent-pages-list .page-list-check').forEach((cb,i)=>{
-    const item=filterPages(recentPagesCache, pagesSearch?.value||'')[i];
-    const key=item? (typeof item==='string'?item:item.url):'';
-    cb.checked=pagesSelected.has(key);
-  });
-}
-function updateFavSelectUI(){
-  if(!favSelectToggle) return;
-  favSelectToggle.textContent=favSelectMode?'Готово':'Выбрать';
-  const hasSel=favSelectMode && favSelected.size>0;
-  favSelectToggle.classList.toggle('hidden-btn',favSelectMode && hasSel);
-  favSelectToggle.style.display=favSelectMode && hasSel?'none':'inline-flex';
-  if(favDeleteBtn){favDeleteBtn.classList.toggle('hidden-btn',!hasSel);favDeleteBtn.style.display=hasSel?'inline-flex':'none';}
-  if(favCancelBtn){favCancelBtn.classList.toggle('hidden-btn',!hasSel);favCancelBtn.style.display=hasSel?'inline-flex':'none';}
-  if(favCountEl) favCountEl.textContent=String(favSelected.size);
-  document.querySelectorAll('#favorite-pages-list .page-list-item').forEach(el=>el.classList.toggle('select-mode', favSelectMode));
-  document.querySelectorAll('#favorite-pages-list .page-list-check').forEach((cb,i)=>{
-    const item=filterPages(favoritePagesCache, favoritesSearch?.value||'')[i];
-    const key=item? (typeof item==='string'?item:item.url):'';
-    cb.checked=favSelected.has(key);
-  });
-}
-pagesSelectToggle?.addEventListener('click',()=>{ pagesSelectMode=!pagesSelectMode; if(!pagesSelectMode) pagesSelected.clear(); updatePagesSelectUI(); renderPageList(recentPagesList, filterPages(recentPagesCache, pagesSearch?.value||'')); });
-pagesCancelBtn?.addEventListener('click',()=>{ pagesSelectMode=false; pagesSelected.clear(); updatePagesSelectUI(); renderPageList(recentPagesList, filterPages(recentPagesCache, pagesSearch?.value||'')); });
-favSelectToggle?.addEventListener('click',()=>{ favSelectMode=!favSelectMode; if(!favSelectMode) favSelected.clear(); updateFavSelectUI(); renderPageList(favoritePagesList, filterPages(favoritePagesCache, favoritesSearch?.value||'')); });
-favCancelBtn?.addEventListener('click',()=>{ favSelectMode=false; favSelected.clear(); updateFavSelectUI(); renderPageList(favoritePagesList, filterPages(favoritePagesCache, favoritesSearch?.value||'')); });
-pagesDeleteBtn?.addEventListener('click',async()=>{
-  if(!pagesSelected.size) return;
-  if(!confirm(`Удалить ${pagesSelected.size} страниц из истории?`)) return;
-  const toDelete=new Set(pagesSelected);
-  try{
-    for(const url of toDelete){
-      try{ await window.native.recentPagesRemove?.(url); }catch{}
-      recentPagesCache=recentPagesCache.filter(it=>{ const u=typeof it==='string'?it:it.url; return !toDelete.has(u) && !samePageUrl(u, [...toDelete][0]); });
-      recentPagesCache=recentPagesCache.filter(it=>{ const u=typeof it==='string'?it:it.url; for(const d of toDelete) if(d===u || samePageUrl(d,u)) return false; return true; });
-    }
-    pagesSelected.clear();
-    pagesSelectMode=false;
-    updatePagesSelectUI();
-    renderPageList(recentPagesList, filterPages(recentPagesCache, pagesSearch?.value||''));
-    toast('Удалено');
-  }catch(e){ toast('Не удалось удалить','error'); }
-});
-favDeleteBtn?.addEventListener('click',async()=>{
-  if(!favSelected.size) return;
-  if(!confirm(`Удалить ${favSelected.size} из избранного?`)) return;
-  const toDelete=new Set(favSelected);
-  try{
-    for(const url of toDelete){
-      try{ await window.native.togglePageFavorite({url}); }catch{}
-      try{ await window.native.pageFavoriteRemove?.(url); }catch{}
-    }
-    favoritePagesCache=favoritePagesCache.filter(it=>{ const u=typeof it==='string'?it:it.url; for(const d of toDelete) if(d===u || samePageUrl(d,u)) return false; return true; });
-    favSelected.clear();
-    favSelectMode=false;
-    updateFavSelectUI();
-    renderPageList(favoritePagesList, filterPages(favoritePagesCache, favoritesSearch?.value||''));
-    syncFavoriteButton();
-    toast('Удалено из избранного');
-  }catch(e){ toast('Не удалось удалить','error'); }
-});
-btnPages?.addEventListener('click',openPages);
-btnPageFavorites?.addEventListener('click',openFavorites);
-btnClosePages?.addEventListener('click',()=>pagesModal?.classList.remove('show'));
-btnCloseFavorites?.addEventListener('click',()=>favoritesModal?.classList.remove('show'));
-pagesModal?.addEventListener('click',e=>{if(e.target===pagesModal)pagesModal.classList.remove('show')});
-favoritesModal?.addEventListener('click',e=>{if(e.target===favoritesModal)favoritesModal.classList.remove('show')});
-btnPageFavorite?.addEventListener('click',async()=>{
-  let url='',title='';
-  try{url=activeWebview?.getURL?.()||'';}catch{}
-  if(!isAnimeOnUrl(url)) url=pageTabs[activeTab]?.url||'';
-  try{title=await activeWebview?.getTitle?.()||'';}catch{}
-  if(!isAnimeOnUrl(url)){toast('Открой страницу AnimeOn, чтобы добавить её в избранное','error');return;}
-  try{
-    const r=await window.native.togglePageFavorite({url,title});
-    if(!r?.ok){toast('Не удалось изменить избранное','error');return;}
-    syncFavoriteButton();
-    toast(r.favorite?'Добавлено в избранное':'Удалено из избранного');
-  }catch{toast('Не удалось изменить избранное','error');}
-});
 btnNewTab?.addEventListener('click',async()=>{
   try{
     syncActiveTabFromWebview();
@@ -1798,6 +1315,7 @@ async function closeTab(index){
 }
 (async()=>{
   try{
+    await remoteSitesReady;
     const selectedId=SITES[store('site')] ? store('site') : 'co';
     currentSite=selectedId;
     const selected=SITES[selectedId];
@@ -1816,9 +1334,13 @@ async function closeTab(index){
     pageTabs.forEach((tab,i)=>{ if(!tabWebviews[i]) createTabWebview(i); });
     showTabWebview(activeTab);
     renderTabs();
-    const activeUrl=pageTabs[activeTab]?.url||selected.url;
-    if(tabWebviews[activeTab]) loadTabUrl(tabWebviews[activeTab], activeUrl);
-    pageTabs.forEach((tab,i)=>{ if(i!==activeTab && tabWebviews[i]) loadTabUrl(tabWebviews[i], tab.url); });
+    await accessKeyFeature.gate;
+    if (!firstLaunchOnboarding && cfg.remember === '1') document.body.classList.add('site-content-ready');
+    if (!firstLaunchOnboarding) {
+      const activeUrl=pageTabs[activeTab]?.url||selected.url;
+      if(tabWebviews[activeTab]) loadTabUrl(tabWebviews[activeTab], activeUrl);
+      pageTabs.forEach((tab,i)=>{ if(i!==activeTab && tabWebviews[i]) loadTabUrl(tabWebviews[i], tab.url); });
+    }
     await window.native.tabsSet(pageTabs,activeTab);
     updateMirrorBtn();
   }catch{
@@ -1829,16 +1351,22 @@ async function closeTab(index){
     pageTabs.forEach((tab,i)=>{ if(!tabWebviews[i]) createTabWebview(i); });
     showTabWebview(0);
     renderTabs();
-    loadTabUrl(tabWebviews[0]||firstWebview,SITES.co.url);
+    await accessKeyFeature.gate;
+    if (!firstLaunchOnboarding && cfg.remember === '1') document.body.classList.add('site-content-ready');
+    if (!firstLaunchOnboarding) loadTabUrl(tabWebviews[0]||firstWebview,SITES.co.url);
   }
 })();
 
 function closeSettings() {
   settingsOverlay.classList.remove('show');
   btnSettings.classList.remove('open');
-  if(settingsSearch){settingsSearch.value='';document.querySelectorAll('.settings-group-card').forEach(c=>c.classList.remove('search-hidden'));}
+  if(settingsSearch){settingsSearch.value='';window.__applySettingsFilter?.();}
 }
 btnSettings.addEventListener('click', openSettings);
+btnWatchNotes?.addEventListener('click',()=>{
+  watchNotesModal?.classList.add('show');
+  setTimeout(()=>document.getElementById('watch-note-input')?.focus(),100);
+});
 btnCloseSettings.addEventListener('click', closeSettings);
 settingsOverlay.addEventListener('click', (e) => {
   if (e.target === settingsOverlay) closeSettings();
@@ -1894,52 +1422,8 @@ function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, ch => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[ch]));
 }
 
-async function loadProfiles(){
-  if(!sysProfileList) return;
-  const r=await window.native.getProfiles();
-  const profiles=r?.profiles||{};
-  sysProfileList.innerHTML=Object.keys(profiles).map(name=>`<div class="profile-chip"><span>${escapeHtml(name)}</span><button data-load-profile="${escapeHtml(name)}">Загрузить</button><button data-delete-profile="${escapeHtml(name)}">×</button></div>`).join('')||'<span class="system-status">Профилей пока нет.</span>';
-  sysProfileList.querySelectorAll('[data-load-profile]').forEach(b=>b.addEventListener('click',async()=>{const r=await window.native.loadProfile(b.dataset.loadProfile);if(!r?.ok){toast('Профиль не найден','error');return;}Object.assign(cfg,r.profile||{});applyTheme(cfg.theme||'violet',{skipSave:true});window.native.setConfig(r.profile||{});toast(`Профиль «${b.dataset.loadProfile}» загружен`);}));
-  sysProfileList.querySelectorAll('[data-delete-profile]').forEach(b=>b.addEventListener('click',async()=>{await window.native.deleteProfile(b.dataset.deleteProfile);loadProfiles();toast('Профиль удалён');}));
-}
-async function loadSystems(){
-  if(!sysStatus)return;
-  sysStatus.textContent='Собираю состояние системы…';
-  const [status,cache,shots]=await Promise.all([window.native.systemStatus(),window.native.cacheInfo(),window.native.listScreenshots()]);
-  sysApi.textContent=status?.api?.ok?`${status.api.ms||0} мс`:'Недоступен';
-  sysApiDetail.textContent=status?.api?.endpoint||'API health';
-  sysMemory.textContent=`${status?.memoryMB||0} MB`;
-  sysSiteMemory.textContent=`WebView ${status?.siteMemoryMB||0} MB`;
-  sysCache.textContent=`${cache?.sessionCacheMB||0} MB`;
-  sysScreenshots.textContent=`Скриншоты ${cache?.screenshots||shots?.items?.length||0}`;
-  const gpu=String(status?.gpu?.gpu_compositing||'unknown');
-  sysGpu.textContent=gpu==='enabled'?'Включён':gpu==='disabled'?'Выключен':gpu;
-  sysStatus.textContent=`Uptime: ${Math.floor((status?.uptime||0)/60)} мин · Performance: ${status?.performance||'balanced'} · Recovery: ${status?.autoRecovery?'ON':'OFF'}`;
-  loadProfiles();
-}
-document.getElementById('sys-refresh')?.addEventListener('click',loadSystems);
-document.getElementById('sys-clear-cache')?.addEventListener('click',async()=>{const r=await window.native.clearApiCache();toast(r?.ok?'API-кэш очищен':'Не удалось очистить кэш',r?.ok?'ok':'error');loadSystems();});
-document.getElementById('sys-clear-session')?.addEventListener('click',async()=>{const r=await window.native.clearCache();toast(r?.ok?'WebView-кэш очищен':'Не удалось очистить кэш',r?.ok?'ok':'error');loadSystems();});
-document.getElementById('sys-profile-save')?.addEventListener('click',async()=>{const name=sysProfileName?.value.trim();if(!name){toast('Укажи название профиля','error');return;}const data={theme:cfg.theme,custom:cfg.custom,visual:cfg.visual,playbackSpeed:cfg.playbackSpeed,playbackPreferences:cfg.playbackPreferences||{},performance:cfg.performance,lowPower:cfg.lowPower,autoHide:cfg.autoHide};const r=await window.native.saveProfile(name,data);if(r?.ok){sysProfileName.value='';loadProfiles();toast(`Профиль «${name}» сохранён`)}else toast(r?.error||'Не удалось сохранить профиль','error');});
-
-btnBack.addEventListener('click', () => wv.goBack());
-btnFwd.addEventListener('click', () => wv.goForward());
-btnHome.addEventListener('click', () => { if (currentSite) loadTabUrl(activeWebview, SITES[currentSite].url); });
-btnReload.addEventListener('click', () => wv.reload());
-
-btnMax.addEventListener('click', () => window.native.toggleMaximize());
-btnFs.addEventListener('click', () => window.native.toggleFullscreen());
-btnClose.addEventListener('click', () => window.native.close());
-
-window.native.onWinState((max) => { btnMax.classList.toggle('is-max', max); document.body.classList.toggle('is-maximized', max); setTimeout(()=>{ try{ syncViewAreaHeight?.(); }catch{} try{ activeWebview?.executeJavaScript('window.dispatchEvent(new Event("resize"))', false); }catch{} }, 80); });
-window.native.onFsState((fs) => document.body.classList.toggle('is-fs', fs));
-
 const commands = [
-  ['Пауза / продолжить', () => window.native.mediaAction('playpause')],
-  ['Picture-in-Picture', async () => { const r = await window.native.togglePiP(); if (!r?.ok) toast('Не удалось включить PiP', 'error'); }],
-  ['Скорость 0.5×', () => { currentPlayerSpeed = 0.5; window.native.setPlaybackSpeed(0.5); renderPlayerSpeed(); }],
   ['Скорость 1×', () => { currentPlayerSpeed = 1; window.native.setPlaybackSpeed(1); renderPlayerSpeed(); }],
-  ['Скорость 1.5×', () => { currentPlayerSpeed = 1.5; window.native.setPlaybackSpeed(1.5); renderPlayerSpeed(); }],
   ['Скорость 2×', () => { currentPlayerSpeed = 2; window.native.setPlaybackSpeed(2); renderPlayerSpeed(); }],
   ['Громче', () => { window.native.setVolume(5); setTimeout(refreshVolume, 50); }],
   ['Тише', () => { window.native.setVolume(-5); setTimeout(refreshVolume, 50); }],
@@ -1947,7 +1431,7 @@ const commands = [
   ['10 секунд назад', () => window.native.seek(-10)],
   ['10 секунд вперёд', () => window.native.seek(10)],
   ['Следующая серия', () => window.native.mediaAction('next')],
-  ['Открыть предыдущий / следующий адрес', () => { openSite(getOtherSiteId()); }],
+  ['Открыть предыдущий / следующий сайт', () => { openSite(getOtherSiteId()); }],
   ['animeon.cc', () => openSite('cc')],
   ['v1.animeon.co', () => openSite('co')],
   ['Предыдущая серия', () => window.native.mediaAction('previous')],
@@ -2021,7 +1505,7 @@ commandPalette?.addEventListener('click', e => { if (e.target === commandPalette
 
 window.addEventListener('keydown', (e) => {
   if (e.ctrlKey && e.key.toLowerCase() === 'k') { e.preventDefault(); openCommandPalette(); return; }
-  if (e.key === 'Escape') { commandPalette?.classList.remove('show'); closeHotkeys(); closeScreenshots(); closeSettings(); hideError(); confirmScreen?.classList.remove('show'); return; }
+  if (e.key === 'Escape') { setVolumePanelOpen(false); commandPalette?.classList.remove('show'); hotkeysFeature.closeHotkeys(); closeScreenshots(); closeSettings(); watchNotesModal?.classList.remove('show'); hideError(); confirmScreen?.classList.remove('show'); return; }
   if (e.key === 'F11') {
     e.preventDefault();
     window.native.toggleFullscreen();
@@ -2091,9 +1575,14 @@ function revealApp(delay = 220) {
     booted = true;
     document.body.classList.add('loaded');
     splash?.classList.add('hide');
-    setTimeout(() => splash?.remove(), 720);
+    showWelcomeScreen();
+    setTimeout(() => {
+      splash?.remove();
+    }, 720);
   }, delay);
 }
+
+if (firstLaunchOnboarding) revealApp(0);
 
 wv.addEventListener('did-start-loading', () => {
   animateProgress(18);
@@ -2122,12 +1611,24 @@ wv.addEventListener('did-stop-loading', () => {
   window.native.setTaskbarProgress?.(1);
   setTimeout(() => window.native.setTaskbarProgress?.(-1), 350);
   revealApp();
+  autoMirrorAttempts = 0;
 });
 
+let autoMirrorCooldown = 0;
+let autoMirrorAttempts = 0;
 wv.addEventListener('did-fail-load', (e) => {
   if (e.errorCode === -3) return;
   window.native.setTaskbarProgress?.(-1);
-  showError('Не удалось открыть зеркало. Попробуй ещё раз или переключись на другое.');
+  const now = Date.now();
+  const autoMirror = cfg.autoMirror !== false;
+  if (autoMirror && booted && now - autoMirrorCooldown > 8000 && autoMirrorAttempts < 3 && Object.keys(SITES).length > 1) {
+    autoMirrorCooldown = now;
+    autoMirrorAttempts += 1;
+    toast('Сайт не отвечает — пробую другой…', 'error');
+    const otherId = getOtherSiteId();
+    if (otherId && otherId !== currentSite) { switchMirror(); return; }
+  }
+  showError('Не удалось открыть сайт. Попробуй ещё раз или переключись на другой.');
 });
 
 setTimeout(() => revealApp(100), 15000);
@@ -2180,6 +1681,9 @@ function setPosterWall(urls) {
 }
 window.native.onMirrorPosters?.((urls) => setPosterWall(urls || []));
 window.native.onLoadProgress?.((p) => {
+
+window.native.onNetStatus?.((data) => { if (data?.results) { netMirrorList.textContent = data.results.map(x => `${x.label}: ${x.ok?'✓':'✗'} ${x.status?`HTTP ${x.status} `:''}${x.ms}ms`).join('\n'); } });
+window.native.onRestartWebview?.(() => { try { wv.reload(); } catch {} });
   try { window.native.setTaskbarProgress?.(p); } catch {}
 });
 
@@ -2226,10 +1730,10 @@ autohideToggle.checked = store('autoHide') !== false;
 compactToggle.checked = !!store('compact');
 if (alwaysOnTopToggle) alwaysOnTopToggle.checked = !!store('alwaysOnTop');
 lowPowerToggle.checked = store('lowPower') !== false;
-if (performanceSelect) performanceSelect.value = store('performance') || 'balanced';
+if (performanceSelect) performanceSelect.pick(store('performance') || 'balanced');
 if (autoRecoveryToggle) autoRecoveryToggle.checked = store('autoRecovery') !== false;
 if (confirmCloseToggle) confirmCloseToggle.checked = store('closeBehavior') === 'ask' || (!!store('confirmClose') && !store('closeBehavior'));
-if (closeBehaviorSelect) closeBehaviorSelect.value = store('closeBehavior') || (store('confirmClose') ? 'ask' : 'exit');
+if (closeBehaviorSelect) closeBehaviorSelect.pick(store('closeBehavior') || (store('confirmClose') ? 'ask' : 'exit'));
 applyPerformance(performanceSelect?.value || 'balanced');
 document.body.classList.toggle('compact-mode', compactToggle.checked);
 document.body.classList.toggle('low-power', lowPowerToggle.checked || performanceSelect?.value === 'economy');
@@ -2238,9 +1742,10 @@ if (appInfo.version) stVersion.textContent = `AnimeOn Desktop · v${appInfo.vers
 
 let rememberSite = store('remember') === '1';
 let savedSite = SITES[store('site')] ? store('site') : 'co';
+accessKeyFeature.initialize();
 try {
-  activateSite(savedSite, { save: false });
-  syncVisualUI();
+  activateSite(savedSite, { save: false, updatePicker: false });
+  siteAppearance.syncVisualUI();
   refreshProfiles();
 } catch (e) {
   try { console.error('[AnimeOn] startup init error', e); } catch {}
@@ -2250,7 +1755,7 @@ startSplashProgress();
 
 try {
   if (picker) {
-    if (rememberSite) {
+    if (firstLaunchOnboarding || rememberSite) {
       picker.classList.remove('show', 'hide');
       document.body.classList.remove('picker-visible');
     } else {
@@ -2267,9 +1772,22 @@ try {
 
 setTimeout(() => refreshUpdateStatus(true), 8000);
 
-setInterval(async () => { try { const state = await window.native.getMediaState(); if (state?.available && Number(state.duration) > 0) persistLocalPlayback(state); } catch {} }, 15000);
+initLocalTools({ native: window.native, cfg, toast });
 
 let lastNotificationSignature='';
-async function pollAnimeNotifications(){try{if(!cfg.notify)return;const r=await window.native.notificationPoll();const items=Array.isArray(r?.items)?r.items:[];const first=items[0];if(!first)return;const sig=String(first.id||first.notification_id||first.created_at||first.title||'');if(sig&&sig!==lastNotificationSignature){if(lastNotificationSignature) toast(first.title||first.message||'Новое уведомление');lastNotificationSignature=sig;}}catch{}}
+async function pollAnimeNotifications() {
+  try {
+    if (!cfg.notify) return;
+    const result = await window.native.notificationPoll();
+    const first = Array.isArray(result?.items) ? result.items[0] : null;
+    if (!first) return;
+    const signature = String(first.id || first.notification_id || first.created_at || first.title || '');
+    if (!signature || signature === lastNotificationSignature) return;
+    const previousSignature = lastNotificationSignature;
+    lastNotificationSignature = signature;
+    if (!previousSignature) return;
+    toast(first.title || first.message || 'Новое уведомление');
+  } catch {}
+}
 setTimeout(pollAnimeNotifications,12000);
 setInterval(pollAnimeNotifications,300000);
