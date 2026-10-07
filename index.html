@@ -28,38 +28,63 @@
 
 </head>
 <body>
-  <div id="edge-glow" aria-hidden="true"></div>
   <div id="poster-wall" aria-hidden="true"></div>
   <div id="splash">
-    <div class="s-logo"><img src="assets/logo.png" alt="" draggable="false"></div>
+    <div class="splash-scene" aria-hidden="true">
+      <span class="splash-orbit splash-orbit-one"></span>
+      <span class="splash-orbit splash-orbit-two"></span>
+      <span class="splash-orbit splash-orbit-three"></span>
+      <span class="splash-spark splash-spark-one"></span>
+      <span class="splash-spark splash-spark-two"></span>
+      <span class="splash-spark splash-spark-three"></span>
+      <span class="splash-spark splash-spark-four"></span>
+      <div class="s-logo"><img src="assets/logo.png" alt="" draggable="false"></div>
+    </div>
     <div class="s-title">ANIME<em>ON</em></div>
-    <div class="s-bar"><i style="width:5%"></i></div>
-    <div class="s-pct">5%</div>
+    <div class="splash-caption">ТВОЁ АНИМЕ — ТВОИ ПРАВИЛА</div>
+    <div class="splash-loading"><div class="s-bar"><i style="width:5%"></i></div><div class="s-pct">5%</div></div>
   </div>
+
+  <section id="welcome-screen" class="welcome-screen" aria-labelledby="welcome-title" aria-hidden="true">
+    <div class="welcome-glow welcome-glow-one" aria-hidden="true"></div>
+    <div class="welcome-glow welcome-glow-two" aria-hidden="true"></div>
+    <div class="welcome-card">
+      <div class="welcome-logo"><img src="assets/logo.png" alt="" draggable="false"></div>
+      <span class="welcome-eyebrow">ТВОЁ АНИМЕ-УГОЛОК</span>
+      <h1 id="welcome-title">Добро пожаловать<br>в <em>AnimeOn</em></h1>
+      <p>Смотри любимые аниме и настраивай приложение под себя.</p>
+      <button id="btn-welcome-continue" class="welcome-continue" type="button">
+        <span>Нажмите, чтобы продолжить</span>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+      </button>
+      <span class="welcome-footnote"><i></i> Приятного просмотра</span>
+    </div>
+  </section>
 
   <div id="site-picker">
     <div class="picker-card">
+      <div class="picker-step"><span>ШАГ 01</span><i></i><b>ВЫБОР САЙТА</b></div>
       <img class="pk-logo" src="assets/logo.png" alt="" draggable="false">
       <div class="pk-brand">ANIME<em>ON</em></div>
-      <h1>Выбери адрес</h1>
-      <p class="pk-sub">Если один адрес не открывается, попробуй второй</p>
+      <h1>Выберите, где смотреть</h1>
+      <p class="pk-sub">Выберите доступный сайт AnimeOn</p>
 
       <div class="pk-cards">
         <button class="site-card" data-site="cc">
           <span class="sc-ico">
             <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.8 2.6 4 5.7 4 9s-1.2 6.4-4 9c-2.8-2.6-4-5.7-4-9s1.2-6.4 4-9z"/></svg>
           </span>
-          <span class="sc-info"><b data-site-label="cc">animeon.cc</b><i>основной</i></span>
+          <span class="sc-info"><b data-site-label="cc">animeon.cc</b><i>Основной сайт</i></span>
           <span class="sc-mark"></span>
         </button>
         <button class="site-card" data-site="co">
           <span class="sc-ico ru">RU</span>
-          <span class="sc-info"><b data-site-label="co">v1.animeon.co</b><i>запасной</i></span>
+          <span class="sc-info"><b data-site-label="co">v1.animeon.co</b><i>Альтернативный сайт</i></span>
           <span class="sc-mark"></span>
         </button>
       </div>
 
-      <button id="btn-continue" class="pk-continue">Открыть</button>
+      <button id="btn-continue" class="pk-continue" type="button"><span>Продолжить</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
 
       <label class="remember-row">
         <span class="switch">
@@ -71,6 +96,87 @@
     </div>
   </div>
 
+  <div id="access-key-layer" class="access-key-layer" aria-hidden="true">
+    <button id="btn-access-key-exit" class="access-key-exit" type="button" aria-label="Закрыть приложение" title="Закрыть приложение">×</button>
+    <section id="access-key-prompt" class="access-key-card access-key-panel" hidden aria-labelledby="access-key-prompt-title">
+      <div class="access-key-emblem" aria-hidden="true">◆</div>
+      <span class="access-key-eyebrow">Ключ доступа</span>
+      <h1 id="access-key-prompt-title">Добавить ключ доступа?</h1>
+      <p>Ключ будет запрашиваться при каждом запуске AnimeOn.</p>
+      <label class="access-key-check"><input id="access-key-suppress-prompt" type="checkbox"><span>Больше не показывать это предложение при запуске</span></label>
+      <div class="access-key-actions">
+        <button id="btn-access-key-skip" class="ghost-btn">Пропустить</button>
+        <button id="btn-access-key-add" class="ghost-btn accent">Добавить ключ</button>
+      </div>
+    </section>
+
+    <section id="access-key-form" class="access-key-card access-key-panel" hidden aria-labelledby="access-key-form-title">
+      <div class="access-key-emblem" aria-hidden="true">◆</div>
+      <span class="access-key-eyebrow">Ключ доступа</span>
+      <h1 id="access-key-form-title">Создать ключ доступа</h1>
+      <p id="access-key-form-hint">Выбери удобный способ защиты приложения.</p>
+      <div id="access-key-methods" class="access-key-methods">
+        <label><input type="radio" name="access-key-method" value="code" checked><span><b>6-значный код</b><i>Только цифры</i></span></label>
+        <label><input type="radio" name="access-key-method" value="pattern"><span><b>Графический ключ</b><i>Соедини минимум 4 точки</i></span></label>
+      </div>
+      <div id="access-key-code-fields" class="access-key-code-fields">
+        <label class="access-key-input-label"><span>Код доступа</span><input id="access-key-secret" type="password" inputmode="numeric" autocomplete="new-password" maxlength="6" placeholder="6 цифр"></label>
+        <div class="access-key-keypad" aria-label="Цифровая клавиатура">
+          <button type="button" data-keypad-key="1">1</button><button type="button" data-keypad-key="2">2</button><button type="button" data-keypad-key="3">3</button>
+          <button type="button" data-keypad-key="4">4</button><button type="button" data-keypad-key="5">5</button><button type="button" data-keypad-key="6">6</button>
+          <button type="button" data-keypad-key="7">7</button><button type="button" data-keypad-key="8">8</button><button type="button" data-keypad-key="9">9</button>
+          <button type="button" data-keypad-key="backspace" aria-label="Удалить последнюю цифру">⌫</button><button type="button" data-keypad-key="0">0</button><span aria-hidden="true"></span>
+        </div>
+      </div>
+      <div id="access-key-pattern-fields" class="access-key-pattern-fields" hidden>
+        <span class="access-key-pattern-label">Нарисуй графический ключ</span>
+        <div class="access-key-pattern-pad" data-pattern-pad="secret" aria-label="Поле графического ключа">
+          <svg viewBox="0 0 100 100" aria-hidden="true"><polyline pathLength="1"></polyline></svg>
+          <button type="button" data-pattern-dot="1" aria-label="Точка 1"><span></span></button><button type="button" data-pattern-dot="2" aria-label="Точка 2"><span></span></button><button type="button" data-pattern-dot="3" aria-label="Точка 3"><span></span></button>
+          <button type="button" data-pattern-dot="4" aria-label="Точка 4"><span></span></button><button type="button" data-pattern-dot="5" aria-label="Точка 5"><span></span></button><button type="button" data-pattern-dot="6" aria-label="Точка 6"><span></span></button>
+          <button type="button" data-pattern-dot="7" aria-label="Точка 7"><span></span></button><button type="button" data-pattern-dot="8" aria-label="Точка 8"><span></span></button><button type="button" data-pattern-dot="9" aria-label="Точка 9"><span></span></button>
+        </div>
+        <button type="button" class="access-key-pattern-clear" data-pattern-clear="secret">Сбросить рисунок</button>
+      </div>
+      <p id="access-key-error" class="access-key-error" role="alert" aria-live="polite"></p>
+      <div class="access-key-actions">
+        <button id="btn-access-key-cancel" class="ghost-btn">Назад</button>
+        <button id="btn-access-key-submit" class="ghost-btn accent">Далее</button>
+      </div>
+    </section>
+
+    <section id="access-key-confirm-form" class="access-key-card access-key-panel" hidden aria-labelledby="access-key-confirm-title">
+      <div class="access-key-emblem" aria-hidden="true">◆</div>
+      <span class="access-key-eyebrow">ПОДТВЕРЖДЕНИЕ</span>
+      <h1 id="access-key-confirm-title">Подтверди ключ</h1>
+      <p id="access-key-confirm-hint">Введи ключ ещё раз, чтобы подтвердить создание.</p>
+      <div id="access-key-confirm-code-fields" class="access-key-code-fields" hidden>
+        <label class="access-key-input-label"><span>Повтори 6-значный код</span><input id="access-key-confirm" type="password" inputmode="numeric" autocomplete="new-password" maxlength="6" placeholder="6 цифр"></label>
+        <div class="access-key-keypad" aria-label="Цифровая клавиатура">
+          <button type="button" data-keypad-key="1">1</button><button type="button" data-keypad-key="2">2</button><button type="button" data-keypad-key="3">3</button>
+          <button type="button" data-keypad-key="4">4</button><button type="button" data-keypad-key="5">5</button><button type="button" data-keypad-key="6">6</button>
+          <button type="button" data-keypad-key="7">7</button><button type="button" data-keypad-key="8">8</button><button type="button" data-keypad-key="9">9</button>
+          <button type="button" data-keypad-key="backspace" aria-label="Удалить последнюю цифру">⌫</button><button type="button" data-keypad-key="0">0</button><span aria-hidden="true"></span>
+        </div>
+      </div>
+      <div id="access-key-confirm-pattern-fields" class="access-key-pattern-fields" hidden>
+        <span class="access-key-pattern-label">Нарисуй тот же графический ключ</span>
+        <div class="access-key-pattern-pad" data-pattern-pad="confirm" aria-label="Подтверждение графического ключа">
+          <svg viewBox="0 0 100 100" aria-hidden="true"><polyline pathLength="1"></polyline></svg>
+          <button type="button" data-pattern-dot="1" aria-label="Точка 1"><span></span></button><button type="button" data-pattern-dot="2" aria-label="Точка 2"><span></span></button><button type="button" data-pattern-dot="3" aria-label="Точка 3"><span></span></button>
+          <button type="button" data-pattern-dot="4" aria-label="Точка 4"><span></span></button><button type="button" data-pattern-dot="5" aria-label="Точка 5"><span></span></button><button type="button" data-pattern-dot="6" aria-label="Точка 6"><span></span></button>
+          <button type="button" data-pattern-dot="7" aria-label="Точка 7"><span></span></button><button type="button" data-pattern-dot="8" aria-label="Точка 8"><span></span></button><button type="button" data-pattern-dot="9" aria-label="Точка 9"><span></span></button>
+        </div>
+        <button type="button" class="access-key-pattern-clear" data-pattern-clear="confirm">Сбросить рисунок</button>
+      </div>
+      <p id="access-key-confirm-error" class="access-key-error" role="alert" aria-live="polite"></p>
+      <div class="access-key-actions">
+        <button id="btn-access-key-confirm-back" class="ghost-btn">Назад</button>
+        <button id="btn-access-key-confirm-submit" class="ghost-btn accent">Подтвердить</button>
+      </div>
+    </section>
+  </div>
+
   <header id="titlebar">
     <div class="brand">
       <span class="brand-badge">
@@ -80,6 +186,9 @@
     </div>
 
     <div class="page-actions" aria-label="Страницы">
+      <button id="btn-tabs-sidebar-toggle" class="tabs-sidebar-toggle" type="button" aria-controls="tabs-bar" aria-expanded="false" title="Открыть список вкладок" aria-label="Открыть список вкладок">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg>
+      </button>
       <button id="btn-pages" class="page-action" title="Открыть список страниц">
         <span class="page-action-icon">☰</span><span>Страницы</span>
       </button>
@@ -111,11 +220,11 @@
         <svg viewBox="0 0 24 24"><path d="M17 4h3v3"/><path d="M20 7L14 13"/><path d="M7 20H4v-3"/><path d="M4 17l6-6"/></svg>
       </button>
       <div class="volume-wrap">
-        <button id="btn-volume" title="Громкость">
+        <button id="btn-volume" title="Громкость" aria-controls="volume-panel" aria-expanded="false">
           <svg viewBox="0 0 24 24"><path d="M4 10v4h4l5 4V6l-5 4H4z"/><path d="M17 9a5 5 0 0 1 0 6"/><path d="M19.5 6.5a8.5 8.5 0 0 1 0 11"/></svg>
         </button>
         <div id="volume-panel">
-          <div class="volume-head"><span>Громкость</span><b id="volume-value">100%</b></div>
+          <b id="volume-value">100%</b>
           <input id="volume-slider" type="range" min="0" max="200" value="100" aria-label="Громкость">
           <div class="volume-actions">
             <button id="volume-minus" title="Тише">−</button>
@@ -129,6 +238,9 @@
     <div class="drag-space"></div>
 
     <div class="win-btns">
+      <button id="btn-watch-notes" title="Заметки" aria-label="Заметки">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>
+      </button>
       <button id="btn-screenshots-main" title="Скриншоты">
         <svg viewBox="0 0 24 24">
           <rect x="3" y="5" width="18" height="14" rx="2"/>
@@ -136,7 +248,7 @@
           <path d="M3 16l4.5-4 3 2.6L15 10l6 6"/>
         </svg>
       </button>
-      <button id="btn-dnd" class="page-tool dnd-tool" type="button" aria-pressed="false" title="Не беспокоить: выключено"><span class="dnd-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></svg></span></button>
+      <button id="btn-dnd" class="page-tool dnd-tool" type="button" aria-pressed="false" aria-label="Приостановить уведомления" title="Уведомления включены"><span class="dnd-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></svg></span></button>
       <button id="btn-hotkeys-main" title="Горячие клавиши">
         <svg viewBox="0 0 24 24">
           <rect x="3" y="5" width="18" height="14" rx="2"/>
@@ -150,17 +262,12 @@
           <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
         </svg>
       </button>
-      <button id="btn-max" title="Развернуть / Свернуть в окно">
-        <svg class="ic-max" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>
-        <svg class="ic-restore" viewBox="0 0 24 24">
-          <rect x="5" y="8" width="11" height="11" rx="1.5"/>
-          <path d="M9 5h10v10" fill="none"/>
-        </svg>
+      <button id="btn-max" title="Свернуть">
+        <svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg>
       </button>
-      <button id="btn-fs" title="Полный экран (F11)">
-        <svg viewBox="0 0 24 24">
-          <path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/>
-        </svg>
+      <button id="btn-fs" title="На весь экран">
+        <svg class="ic-max" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>
+        <svg class="ic-restore" viewBox="0 0 24 24"><rect x="5" y="8" width="11" height="11" rx="1.5"/><path d="M9 5h10v10"/></svg>
       </button>
       <button id="btn-close" class="danger" title="Закрыть">
         <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
@@ -168,11 +275,16 @@
     </div>
   </header>
 
-  <div id="page-toolbar">
-    <div id="tabs-bar" class="tabs-bar"></div>
-    <div class="page-toolbar-actions">
+  <aside id="page-toolbar" aria-label="Открытые вкладки">
+    <div class="tabs-sidebar-head">
+      <div class="tabs-sidebar-heading">
+        <span class="tabs-sidebar-mark" aria-hidden="true">✦</span>
+        <span><b>Вкладки</b><i>Твои страницы</i></span>
+      </div>
+      <span id="tabs-count" class="tabs-count" aria-live="polite">0</span>
     </div>
-  </div>
+    <div id="tabs-bar" class="tabs-bar" role="tablist" aria-label="Открытые страницы" aria-hidden="true" inert></div>
+  </aside>
   <div id="find-bar" class="find-bar" hidden aria-hidden="true">
     <span class="find-icon">⌕</span>
     <input id="find-input" autocomplete="off" placeholder="Поиск на странице" aria-label="Поиск на странице">
@@ -189,14 +301,12 @@
       <div class="error-sub" id="error-message">Не получилось открыть AnimeOn.</div>
       <div class="error-actions">
         <button id="btn-error-retry" class="ghost-btn accent">Повторить</button>
-        <button id="btn-error-mirror" class="ghost-btn">Другой адрес</button>
+        <button id="btn-error-mirror" class="ghost-btn">Другой сайт</button>
       </div>
     </div>
   </div>
 
   <div id="settings">
-    <div class="sp-blob b1"></div>
-    <div class="sp-blob b2"></div>
     <div class="settings-card">
       <header class="st-head">
         <img src="assets/logo.png" alt="" draggable="false">
@@ -209,17 +319,19 @@
         </button>
       </header>
 
-      <div class="st-body">
-        <div id="settings-nav" class="settings-nav">
-          <button class="settings-nav-arrow" data-settings-scroll="prev" aria-label="Предыдущие категории">‹</button>
-          <div class="settings-nav-viewport">
-            <div class="settings-nav-list">
-              <button class="settings-nav-item active" data-settings-filter="all">Все</button><button class="settings-nav-item" data-settings-filter="main">Основные</button><button class="settings-nav-item" data-settings-filter="view">Внешний вид</button><button class="settings-nav-item" data-settings-filter="player">Вкладки</button><button class="settings-nav-item" data-settings-filter="notifications">Уведомления</button><button class="settings-nav-item" data-settings-filter="performance">Производительность</button><button class="settings-nav-item" data-settings-filter="cache">Кэш</button><button class="settings-nav-item" data-settings-filter="network">Сеть</button><button class="settings-nav-item" data-settings-filter="screenshots">Скриншоты</button><button class="settings-nav-item" data-settings-filter="updates">Обновления</button><button class="settings-nav-item" data-settings-filter="advanced">Дополнительно</button>
-            </div>
+      <div class="st-body st-side">
+        <aside class="st-sidebar">
+          <div class="settings-search-wrap"><input id="settings-search" type="text" placeholder="Поиск по настройкам..." class="pages-search-input"><span class="settings-search-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="10.8" cy="10.8" r="6.3"/><path d="m15.5 15.5 4.2 4.2"/></svg></span></div>
+          <div class="st-side-cap">Категории</div>
+          <div class="settings-nav-list" id="settings-nav-list">
+            <button class="settings-nav-item active" data-settings-filter="all">Все</button><button class="settings-nav-item" data-settings-filter="main">Основные</button><button class="settings-nav-item" data-settings-filter="view">Внешний вид</button><button class="settings-nav-item" data-settings-filter="player">Инструменты</button><button class="settings-nav-item" data-settings-filter="notifications">Уведомления</button><button class="settings-nav-item" data-settings-filter="performance">Производительность</button><button class="settings-nav-item" data-settings-filter="cache">Кэш</button><button class="settings-nav-item" data-settings-filter="network">Сеть</button><button class="settings-nav-item" data-settings-filter="screenshots">Скриншоты</button><button class="settings-nav-item" data-settings-filter="updates">Обновления</button><button class="settings-nav-item" data-settings-filter="accessKey">Ключ доступа</button><button class="settings-nav-item" data-settings-filter="advanced">Дополнительно</button>
           </div>
-          <button class="settings-nav-arrow" data-settings-scroll="next" aria-label="Следующие категории">›</button>
-        </div>
-        <div class="settings-search-wrap"><input id="settings-search" type="text" placeholder="Поиск настроек..." class="pages-search-input"><span class="settings-search-icon">⌕</span></div>
+        </aside>
+        <div class="st-content" id="st-content">
+        <section class="st-section settings-group-card" data-settings-group="player" id="discord-status-section">
+          <div class="st-title">Статус Discord</div>
+          <div class="switch-row"><div class="sw-text"><b>Статус Discord</b><i>Показывает статус в Discord</i></div><label class="switch"><input type="checkbox" id="discord-rpc-enabled"><span class="sw-track"><span class="sw-knob"></span></span></label></div>
+        </section>
         <section class="st-section settings-group-card" data-settings-group="view">
           <div class="st-title">Внешний вид</div>
           <div class="theme-head"><span>Цвет интерфейса</span><b id="theme-name">Фиолетовый</b></div>
@@ -234,24 +346,6 @@
             <button class="theme-swatch" data-theme="orange" title="Оранжевый"></button>
             <button class="theme-swatch" data-theme="red" title="Красный"></button>
             <button class="theme-swatch" data-theme="pink" title="Розовый"></button>
-          </div>
-          <div class="custom-color-row">
-            <button id="custom-color-open" class="custom-color-picker" type="button" title="Выбрать свой цвет" aria-label="Выбрать свой цвет">
-              <span class="custom-color-dot"></span>
-            </button>
-            <div class="custom-color-info"><b>Свой цвет</b><span id="custom-color-value">#8B5CF6</span></div>
-            <button id="custom-color-copy" class="color-mini-btn" type="button"><span class="copy-icon">⧉</span><span>Копировать</span></button>
-          </div>
-          <div id="custom-picker" class="custom-picker" hidden>
-            <div class="custom-picker-head"><div><b>Свой цвет</b><span id="custom-picker-preview-name">#8B5CF6</span></div><button id="custom-picker-close" type="button" aria-label="Закрыть">×</button></div>
-            <div id="picker-sv" class="picker-sv"><span id="picker-cursor"></span></div>
-            <div id="picker-hue" class="picker-hue"><span id="picker-hue-cursor"></span></div>
-            <div class="picker-bottom">
-              <label class="hex-field"><span>HEX</span><input id="custom-hex-input" type="text" value="#8B5CF6" maxlength="7" spellcheck="false" autocomplete="off" inputmode="text"></label>
-              <button id="custom-picker-eyedropper" class="picker-tool" type="button">Пипетка</button>
-              <button id="custom-picker-copy" class="picker-tool" type="button">Копировать</button>
-              <button id="custom-picker-done" class="picker-done" type="button">Готово</button>
-            </div>
           </div>
           <details class="theme-more">
             <summary>Ещё цвета <span>+</span></summary>
@@ -272,6 +366,24 @@
               <button class="theme-swatch" data-theme="electric" title="Электрик"></button>
             </div>
           </details>
+          <div class="custom-color-row">
+            <button id="custom-color-open" class="custom-color-picker" type="button" title="Выбрать свой цвет" aria-label="Выбрать свой цвет">
+              <span class="custom-color-dot"></span>
+            </button>
+            <div class="custom-color-info"><b>Свой цвет</b><span id="custom-color-value">#8B5CF6</span></div>
+            <button id="custom-color-copy" class="color-mini-btn" type="button"><span class="copy-icon">⧉</span><span>Копировать</span></button>
+          </div>
+          <div id="custom-picker" class="custom-picker" hidden>
+            <div class="custom-picker-head"><div><b>Свой цвет</b><span id="custom-picker-preview-name">#8B5CF6</span></div><button id="custom-picker-close" type="button" aria-label="Закрыть">×</button></div>
+            <div id="picker-sv" class="picker-sv"><span id="picker-cursor"></span></div>
+            <div id="picker-hue" class="picker-hue"><span id="picker-hue-cursor"></span></div>
+            <div class="picker-bottom">
+              <label class="hex-field"><span>HEX</span><input id="custom-hex-input" type="text" value="#8B5CF6" maxlength="7" spellcheck="false" autocomplete="off" inputmode="text"></label>
+              <button id="custom-picker-eyedropper" class="picker-tool" type="button">Пипетка</button>
+              <button id="custom-picker-copy" class="picker-tool" type="button">Копировать</button>
+              <button id="custom-picker-done" class="picker-done" type="button">Готово</button>
+            </div>
+          </div>
           <p class="st-hint">Выбирай любой цвет.</p>
         </section>
 
@@ -294,30 +406,42 @@
           <div class="switch-row">
             <div class="sw-text">
               <b>Заходить сразу</b>
-              <i>Не спрашивать адрес при запуске</i>
+              <i>Не спрашивать сайт при запуске</i>
             </div>
             <label class="switch">
               <input type="checkbox" id="remember-settings">
               <span class="sw-track"><span class="sw-knob"></span></span>
             </label>
           </div>
-          <p class="st-hint">Адрес можно поменять кнопками со стрелками сверху</p>
+          <p class="st-hint">Сайт можно поменять кнопками со стрелками сверху</p>
         </section>
 
 
 
         <section class="st-section settings-group-card" data-settings-group="view">
           <div class="st-title">Оформление сайта</div>
-          <div class="switch-row">
-            <div class="sw-text">
-              <b>Плавность сайта</b>
-              <i>Делает сайт плавнее</i>
-            </div>
-            <label class="switch">
-              <input type="checkbox" id="smoothsite-toggle">
-              <span class="sw-track"><span class="sw-knob"></span></span>
-            </label>
+          <div class="site-style-presets" role="group" aria-label="Готовые стили">
+            <button type="button" class="ghost-btn small" data-site-style-preset="default">Стандарт</button>
+            <button type="button" class="ghost-btn small" data-site-style-preset="compact">Компактно</button>
+            <button type="button" class="ghost-btn small" data-site-style-preset="readable">Крупнее</button>
+            <button type="button" class="ghost-btn small" data-site-style-preset="glass">Мягкое стекло</button>
           </div>
+          <div class="visual-grid">
+            <label class="visual-control"><span>Скругление <b id="visual-radius-value">18px</b></span><input id="visual-radius" type="range" min="0" max="36" value="18"></label>
+            <label class="visual-control"><span>Непрозрачность <b id="visual-opacity-value">92%</b></span><input id="visual-opacity" type="range" min="55" max="100" value="92"></label>
+            <label class="visual-control"><span>Размытие панелей <b id="visual-blur-value">0px</b></span><input id="visual-blur" type="range" min="0" max="40" value="0"></label>
+            <label class="visual-control"><span>Масштаб страницы <b id="visual-scale-value">100%</b></span><input id="visual-scale" type="range" min="85" max="115" value="100"></label>
+            <label class="visual-control"><span>Плотность <b id="visual-density-value">100%</b></span><input id="visual-density" type="range" min="80" max="120" value="100"></label>
+            <label class="visual-control"><span>Свечение <b id="visual-glow-value">70%</b></span><input id="visual-glow" type="range" min="0" max="100" value="70"></label>
+          </div>
+          <div class="switch-row site-style-switch"><div class="sw-text"><b>Плавная прокрутка</b></div><label class="switch"><input type="checkbox" id="smooth-scroll-toggle" checked><span class="sw-track"><span class="sw-knob"></span></span></label></div>
+          <div class="switch-row site-style-switch"><div class="sw-text"><b>Показывать скроллбар</b></div><label class="switch"><input type="checkbox" id="site-scrollbars-toggle"><span class="sw-track"><span class="sw-knob"></span></span></label></div>
+          <div class="settings-action-grid">
+            <button id="btn-visual-apply" class="ghost-btn accent">Применить стиль</button>
+            <button id="btn-visual-reset" class="ghost-btn">Сбросить стиль</button>
+          </div>
+          <details class="site-css-details">
+            <summary>Дополнительный CSS</summary>
           <div class="site-css-editor">
             <textarea id="site-css-input" spellcheck="false" placeholder="
 Например:
@@ -326,35 +450,16 @@
               <button id="btn-site-css-apply" class="ghost-btn accent">Применить</button>
               <button id="btn-site-css-reset" class="ghost-btn">Сбросить CSS</button>
             </div>
-            <p class="st-hint">CSS сохраняется отдельно для каждого сайта.
-        </section>
-
-        <section class="st-section settings-group-card" data-settings-group="view">
-          <div class="st-title">Конструктор интерфейса</div>
-          <div class="visual-grid">
-            <label class="visual-control"><span>Скругление <b id="visual-radius-value">18px</b></span><input id="visual-radius" type="range" min="0" max="36" value="18"></label>
-            <label class="visual-control"><span>Прозрачность <b id="visual-opacity-value">92%</b></span><input id="visual-opacity" type="range" min="55" max="100" value="92"></label>
-            <label class="visual-control"><span>Размытие <b id="visual-blur-value">0px</b></span><input id="visual-blur" type="range" min="0" max="40" value="0"></label>
-            <label class="visual-control"><span>Масштаб <b id="visual-scale-value">100%</b></span><input id="visual-scale" type="range" min="85" max="115" value="100"></label>
-            <label class="visual-control"><span>Плотность <b id="visual-density-value">100%</b></span><input id="visual-density" type="range" min="80" max="120" value="100"></label>
-            <label class="visual-control"><span>Свечение <b id="visual-glow-value">70%</b></span><input id="visual-glow" type="range" min="0" max="100" value="70"></label>
+            <p class="st-hint">Твой CSS хранится отдельно для каждого сайта.</p>
           </div>
-          <div class="switch-row animation-row">
-            <div class="sw-text"><b>Анимации</b><i>Плавные переходы</i></div>
-            <select id="visual-animation" class="perf-select"><option value="off">Выключено</option><option value="smooth" selected>Плавно</option><option value="cinematic">Кино</option></select>
-          </div>
-          <div class="settings-action-grid">
-            <button id="btn-visual-apply" class="ghost-btn accent">Применить стиль</button>
-            <button id="btn-visual-reset" class="ghost-btn">Сбросить стиль</button>
-          </div>
-          <p class="st-hint">Изменения сохраняются автоматически.</p>
+          </details>
         </section>
 
         <section class="st-section settings-group-card" data-settings-group="view">
           <div class="st-title">Профили оформления</div>
-          <div class="profile-row"><select id="style-profile-select" class="perf-select"><option value="">Выберите профиль</option></select><input id="style-profile-name" class="profile-input" maxlength="32" placeholder="Название нового профиля"><button id="btn-profile-save" class="ghost-btn accent">Сохранить</button></div>
+          <div class="profile-row"><div class="cselect" id="profile-select" data-value=""><button type="button" class="cselect-btn"><span class="cselect-label dim">Выберите профиль</span><svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></button><div class="cselect-list" hidden></div></div><input id="style-profile-name" class="profile-input" maxlength="32" placeholder="Название нового профиля"><button id="btn-profile-save" class="ghost-btn accent">Сохранить</button></div>
           <div class="settings-action-grid"><button id="btn-profile-load" class="ghost-btn">Загрузить</button><button id="btn-profile-delete" class="ghost-btn danger-outline">Удалить</button></div>
-          <p class="st-hint">В профиле остаются цвет, эффекты и CSS для выбранного адреса.</p>
+          <p class="st-hint">В профиле остаются цвет, эффекты и CSS для выбранного сайты.</p>
         </section>
 
         <section class="st-section settings-group-card" data-settings-group="main">
@@ -442,11 +547,7 @@
               <b>При закрытии</b>
               <i>Что делать при нажатии на крестик</i>
             </div>
-            <select id="close-behavior-select" class="perf-select">
-              <option value="ask">Спрашивать</option>
-              <option value="tray">Убирать в трей</option>
-              <option value="exit">Выходить</option>
-            </select>
+            <div class="cselect" id="close-behavior-select" data-value="ask"><button type="button" class="cselect-btn"><span class="cselect-label">Спрашивать</span><svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></button><div class="cselect-list" hidden><button type="button" data-value="ask" class="sel"><span class="cselect-t"><b>Спрашивать</b></span><svg class="cselect-check" viewBox="0 0 24 24"><path d="M5 13l4 4 10-11"/></svg></button><button type="button" data-value="tray"><span class="cselect-t"><b>Убирать в трей</b></span><svg class="cselect-check" viewBox="0 0 24 24"><path d="M5 13l4 4 10-11"/></svg></button><button type="button" data-value="exit"><span class="cselect-t"><b>Выходить</b></span><svg class="cselect-check" viewBox="0 0 24 24"><path d="M5 13l4 4 10-11"/></svg></button></div></div>
           </div>
           <div class="hotkeys-card-row">
             <div class="sw-text">
@@ -460,11 +561,7 @@
               <b>Быстродействие</b>
               <i>Меняет только работу самого приложения</i>
             </div>
-            <select id="performance-select" class="perf-select">
-              <option value="performance">Быстро</option>
-              <option value="balanced">Обычно</option>
-              <option value="economy">Экономно</option>
-            </select>
+            <div class="cselect" id="performance-select" data-value="balanced"><button type="button" class="cselect-btn"><span class="cselect-label">Обычно</span><svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></button><div class="cselect-list" hidden><button type="button" data-value="performance"><span class="cselect-t"><b>Быстро</b></span><svg class="cselect-check" viewBox="0 0 24 24"><path d="M5 13l4 4 10-11"/></svg></button><button type="button" data-value="balanced" class="sel"><span class="cselect-t"><b>Обычно</b></span><svg class="cselect-check" viewBox="0 0 24 24"><path d="M5 13l4 4 10-11"/></svg></button><button type="button" data-value="economy"><span class="cselect-t"><b>Экономно</b></span><svg class="cselect-check" viewBox="0 0 24 24"><path d="M5 13l4 4 10-11"/></svg></button></div></div>
           </div>
         </section>
 
@@ -473,7 +570,7 @@
           <div class="settings-subgroup">
             <div class="settings-subtitle">Страница</div>
             <div class="settings-action-grid">
-              <button id="btn-restart-webview" class="ghost-btn accent">Перезапустить страницу</button>
+              <button id="btn-restart-webview" class="ghost-btn success">Перезапустить страницу</button>
               <button id="btn-reset-webview-state" class="ghost-btn">Сбросить страницу</button>
             </div>
           </div>
@@ -513,15 +610,36 @@
           </div>
         </section>
 
+        <section class="st-section settings-group-card" data-settings-group="player">
+          <div class="settings-subgroup">
+            <div class="settings-subtitle">Удалённый доступ с телефона</div>
+            <p class="st-hint">Управление AnimeOn с телефона пока недоступно.</p>
+            <div class="remote-access-status" aria-label="Статус функции">В РАЗРАБОТКЕ</div>
+          </div>
+        </section>
         <section class="st-section settings-group-card" data-settings-group="player"><div class="st-title">Вкладки</div><div class="switch-row"><div class="sw-text"><b>Сохранять открытые сайты</b><i>Все вкладки останутся после перезапуска приложения</i></div><label class="switch"><input type="checkbox" id="save-tabs-toggle" checked><span class="sw-track"><span class="sw-knob"></span></span></label></div><div class="switch-row"><div class="sw-text"><b>Восстанавливать последний сайт</b><i>При запуске откроется та же вкладка, где ты остановился</i></div><label class="switch"><input type="checkbox" id="restore-last-toggle" checked><span class="sw-track"><span class="sw-knob"></span></span></label></div><div class="settings-action-grid"><button id="btn-clear-tabs" class="ghost-btn">Очистить вкладки</button></div></section>
-        <section class="st-section settings-group-card" data-settings-group="notifications"><div class="st-title">Уведомления</div><div class="switch-row"><div class="sw-text"><b>Уведомления о событиях</b><i>Разрешить уведомления приложения</i></div><label class="switch"><input type="checkbox" id="notify-toggle-advanced"><span class="sw-track"><span class="sw-knob"></span></span></label></div><p class="st-hint">Режим «Не беспокоить» теперь переключается кнопкой с колокольчиком под панелью вкладок.</p></section>
+        <section class="st-section settings-group-card" data-settings-group="notifications"><div class="st-title">Уведомления</div><div class="switch-row"><div class="sw-text"><b>Уведомления о событиях</b><i>Показывать уведомления AnimeOn</i></div><label class="switch"><input type="checkbox" id="notify-toggle-advanced"><span class="sw-track"><span class="sw-knob"></span></span></label></div><p class="st-hint">Кнопка с колокольчиком временно приостанавливает уведомления.</p></section>
         <section class="st-section settings-group-card" data-settings-group="cache"><div class="st-title">Кэш</div><div class="switch-row"><div class="sw-text"><b>Автоматическая очистка</b><i>Чистить кэш после превышения лимита</i></div><label class="switch"><input type="checkbox" id="cache-auto-toggle"><span class="sw-track"><span class="sw-knob"></span></span></label></div><div class="cache-limit-card"><div class="cache-limit-head"><span>Лимит кэша</span><span id="cache-info-text" class="cache-info"></span></div><div class="cache-limit-control"><input id="cache-limit" type="number" min="64" max="16384" step="64" class="cache-input"><span class="cache-unit">МБ</span></div><div class="cache-limit-hint">от 64 до 16384 МБ</div></div><div class="settings-action-grid"><button id="btn-cache-refresh" class="ghost-btn">Обновить размер</button><button id="btn-cache-clean" class="ghost-btn">Очистить сейчас</button></div></section>
         <section class="st-section settings-group-card" data-settings-group="performance"><div class="st-title">Производительность</div><div class="switch-row"><div class="sw-text"><b>Экономия памяти</b><i>Снижает активность страницы в фоне</i></div><label class="switch"><input type="checkbox" id="memory-saver-toggle"><span class="sw-track"><span class="sw-knob"></span></span></label></div></section>
-        <section class="st-section settings-group-card" data-settings-group="network"><div class="st-title">Сеть</div><div class="settings-action-grid"><button id="btn-network-check" class="ghost-btn">Проверить соединение</button><button id="btn-network-open-log" class="ghost-btn">Открыть журнал</button></div></section>
-        <section class="st-section settings-group-card" data-settings-group="screenshots"><div class="st-title">Скриншоты</div><p class="st-hint">Просто скриншоты.</p><div class="settings-action-grid"><button id="btn-screenshots-open-settings" class="ghost-btn">Открыть галерею</button><button id="btn-screenshots-folder-settings" class="ghost-btn">Открыть папку</button></div></section>
+        <section class="st-section settings-group-card" data-settings-group="network"><div class="st-title">Сеть</div><div class="settings-subgroup"><div class="settings-subtitle">Автопереключение сайтов</div><div class="switch-row"><div class="sw-text"><b>Автоматически переключать сайт</b><i>При ошибке загрузки пробовать другой сайт</i></div><label class="switch"><input type="checkbox" id="auto-mirror-toggle" checked><span class="sw-track"><span class="sw-knob"></span></span></label></div></div><div class="settings-subgroup"><div class="settings-subtitle">Прокси</div><div class="settings-row"><label>Режим</label><div class="cselect" id="proxy-select" data-value="system"><button type="button" class="cselect-btn"><span class="cselect-dot"></span><span class="cselect-label">Системный</span><svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></button><div class="cselect-list" hidden><button type="button" data-value="system" class="sel"><span class="cselect-dot" style="background:#60a5fa;box-shadow:0 0 8px rgba(96,165,250,.8)"></span><span class="cselect-t"><b>Системный</b></span><svg class="cselect-check" viewBox="0 0 24 24"><path d="M5 13l4 4 10-11"/></svg></button><button type="button" data-value="direct"><span class="cselect-dot" style="background:#34d399;box-shadow:0 0 8px rgba(52,211,153,.8)"></span><span class="cselect-t"><b>Без прокси</b></span><svg class="cselect-check" viewBox="0 0 24 24"><path d="M5 13l4 4 10-11"/></svg></button><button type="button" data-value="custom"><span class="cselect-dot" style="background:#fbbf24;box-shadow:0 0 8px rgba(251,191,36,.8)"></span><span class="cselect-t"><b>Ручной</b></span><svg class="cselect-check" viewBox="0 0 24 24"><path d="M5 13l4 4 10-11"/></svg></button></div></div></div><div class="settings-row" id="proxy-custom-row"><label for="proxy-host">Адрес</label><input id="proxy-host" type="text" placeholder="host:port" autocomplete="off"><label for="proxy-user">Логин</label><input id="proxy-user" type="text" placeholder="логин"><label for="proxy-pass">Пароль</label><input id="proxy-pass" type="password" placeholder="пароль"></div><div class="settings-action-grid"><button id="btn-proxy-check" class="ghost-btn">Проверить прокси</button></div><p class="st-hint" id="proxy-status"></p></div><div class="settings-subgroup"><div class="settings-subtitle">DNS-over-HTTPS</div><div class="switch-row"><div class="sw-text"><b>Использовать DoH (Cloudflare/Google)</b><i>Шифрует DNS-запросы, обходит блокировки</i></div><label class="switch"><input type="checkbox" id="doh-toggle"><span class="sw-track"><span class="sw-knob"></span></span></label></div></div><div class="settings-subgroup"><div class="settings-subtitle">Состояние сайтов</div><pre id="net-mirror-list" class="diagnostics-output"></pre><div class="settings-action-grid"><button id="btn-network-check" class="ghost-btn">Проверить сайты</button><button id="btn-net-apply" class="ghost-btn accent">Применить настройки</button></div></div></section>
+        <section class="st-section settings-group-card" data-settings-group="screenshots"><div class="st-title">Скриншоты</div><p class="st-hint">Сохранённые скриншоты.</p><div class="settings-action-grid"><button id="btn-screenshots-open-settings" class="ghost-btn">Открыть галерею</button><button id="btn-screenshots-folder-settings" class="ghost-btn">Открыть папку</button></div></section>
+        <section class="st-section settings-group-card" data-settings-group="accessKey">
+          <div class="st-title">Ключ доступа</div>
+          <p id="access-key-settings-status" class="st-hint">Проверяю состояние защиты…</p>
+          <div class="settings-action-grid">
+            <button id="btn-access-key-settings-create" class="ghost-btn accent">Создать ключ</button>
+            <button id="btn-access-key-settings-remove" class="ghost-btn danger-outline" hidden>Удалить ключ</button>
+          </div>
+          <div class="switch-row access-key-prompt-setting">
+            <div class="sw-text"><b>Предлагать настроить ключ при запуске</b><i>Показывать предложение, пока ключ доступа не создан</i></div>
+            <label class="switch"><input id="access-key-prompt-toggle" type="checkbox"><span class="sw-track"><span class="sw-knob"></span></span></label>
+          </div>
+          <p class="st-hint">Ключ понадобится при каждом запуске. Чтобы заменить или удалить его, сначала подтверди действующий ключ. Если файл ключа удалить вручную, сохранённые cookies аккаунтов будут очищены.</p>
+        </section>
         <section class="st-section settings-group-card" data-settings-group="advanced"><div class="st-title">Журнал ошибок</div><p class="st-hint">Журнал помогает разобраться, если приложение работает неправильно.</p><div class="settings-action-grid"><button id="btn-open-log" class="ghost-btn">Открыть журнал</button><button id="btn-copy-log" class="ghost-btn">Скопировать журнал</button><button id="btn-clear-log" class="ghost-btn danger-outline">Очистить журнал</button></div></section>
-        <section class="st-section settings-group-card" data-settings-group="updates"><div class="st-title">О программе</div><div class="about-card"><div class="about-head"><img src="assets/logo.png" alt="" class="about-logo"><div class="about-info"><b>AnimeOn Desktop</b><span id="about-version-value"></span><i>Неофициальный десктоп-клиент для AnimeOn • v1.4.0</i></div></div><p class="about-text" style="margin:12px 0 0">Это неофициальное приложение. Я никак не связан с командой AnimeOn, а весь контент принадлежит им </p></div><div class="settings-action-grid" style="margin-top:12px"><button id="btn-about-check-update" class="ghost-btn accent">Проверить обновления</button><button id="btn-about-source" class="ghost-btn">Исходный код</button></div></section>
+        <section class="st-section settings-group-card" data-settings-group="updates"><div class="st-title">О программе</div><div class="about-card"><div class="about-head"><img src="assets/logo.png" alt="" class="about-logo"><div class="about-info"><b>AnimeOn Desktop</b><span id="about-version-value"></span><i>Неофициальный десктоп-клиент для AnimeOn</i></div></div><p class="about-text" style="margin:8px 0 0">Неофициальное приложение, не связанное с командой AnimeOn.</p></div><div class="settings-action-grid" style="margin-top:8px"><button id="btn-about-check-update" class="ghost-btn accent">Проверить обновления</button><button id="btn-about-source" class="ghost-btn">Исходный код</button></div></section>
 
+        </div>
       </div>
     </div>
   </div>
@@ -530,12 +648,23 @@
 
 
 
-  <div id="pages-modal" class="hotkeys-modal"><div class="hotkeys-card pages-card pages-card-single"><header class="st-head"><div class="st-titles"><b>Страницы</b><i>Недавно открытые страницы</i></div><button id="btn-close-pages" title="Закрыть">×</button></header><div class="pages-single-body"><div class="pages-toolbar"><button id="pages-select-toggle" class="ghost-btn small">Выбрать</button><button id="pages-delete-selected" class="ghost-btn small danger-outline" style="display:none">Удалить (<span id="pages-selected-count">0</span>)</button><button id="pages-cancel-select" class="ghost-btn small" style="display:none">Отмена</button></div><div class="settings-subtitle">Недавние</div><div class="pages-search-wrap"><input id="pages-search" type="text" placeholder="Поиск по страницам..." class="pages-search-input"><span class="pages-search-icon">⌕</span></div><div id="recent-pages-list" class="pages-list"></div></div></div></div>
+  <div id="pages-modal" class="hotkeys-modal"><div class="hotkeys-card pages-card pages-card-single"><header class="st-head"><div class="st-titles"><b>Страницы</b><i>Недавно открытые страницы</i></div><button id="btn-close-pages" title="Закрыть">×</button></header><div class="pages-single-body"><div class="pages-toolbar"><button id="pages-select-toggle" class="ghost-btn small">Выбрать</button><button id="pages-select-all" class="ghost-btn small" style="display:none">Выбрать все</button><button id="pages-delete-selected" class="ghost-btn small danger-outline" style="display:none">Удалить (<span id="pages-selected-count">0</span>)</button><button id="pages-cancel-select" class="ghost-btn small" style="display:none">Отмена</button></div><div class="settings-subtitle">Недавние</div><div class="pages-search-wrap"><input id="pages-search" type="text" placeholder="Поиск по страницам..." class="pages-search-input"><span class="pages-search-icon">⌕</span></div><div id="recent-pages-list" class="pages-list"></div></div></div></div>
 
-  <div id="favorites-modal" class="hotkeys-modal"><div class="hotkeys-card pages-card pages-card-single"><header class="st-head"><div class="st-titles"><b>Избранное</b><i>Сохранённые страницы AnimeOn</i></div><button id="btn-close-favorites" title="Закрыть">×</button></header><div class="pages-single-body"><div class="pages-toolbar"><button id="favorites-select-toggle" class="ghost-btn small">Выбрать</button><button id="favorites-delete-selected" class="ghost-btn small danger-outline" style="display:none">Удалить (<span id="favorites-selected-count">0</span>)</button><button id="favorites-cancel-select" class="ghost-btn small" style="display:none">Отмена</button></div><div class="settings-subtitle">Избранные страницы</div><div class="pages-search-wrap"><input id="favorites-search" type="text" placeholder="Поиск по избранному..." class="pages-search-input"><span class="pages-search-icon">⌕</span></div><div id="favorite-pages-list" class="pages-list"></div></div></div></div>
+  <div id="favorites-modal" class="hotkeys-modal"><div class="hotkeys-card pages-card pages-card-single"><header class="st-head"><div class="st-titles"><b>Избранное</b><i>Сохранённые страницы AnimeOn</i></div><button id="btn-close-favorites" title="Закрыть">×</button></header><div class="pages-single-body"><div class="pages-toolbar"><button id="favorites-select-toggle" class="ghost-btn small">Выбрать</button><button id="favorites-select-all" class="ghost-btn small" style="display:none">Выбрать все</button><button id="favorites-delete-selected" class="ghost-btn small danger-outline" style="display:none">Удалить (<span id="favorites-selected-count">0</span>)</button><button id="favorites-cancel-select" class="ghost-btn small" style="display:none">Отмена</button></div><div class="settings-subtitle">Избранные страницы</div><div class="pages-search-wrap"><input id="favorites-search" type="text" placeholder="Поиск по избранному..." class="pages-search-input"><span class="pages-search-icon">⌕</span></div><div id="favorite-pages-list" class="pages-list"></div></div></div></div>
+
+  <div id="watch-notes-modal" class="hotkeys-modal">
+    <div class="hotkeys-card pages-card pages-card-single watch-notes-card">
+      <header class="st-head"><div class="st-titles"><b>Заметки</b><i>Сохранённые моменты просмотра</i></div><button id="btn-close-watch-notes" title="Закрыть">×</button></header>
+      <div class="pages-single-body watch-notes-body">
+        <p class="st-hint" id="watch-note-context">Запусти видео, чтобы сохранить заметку на текущей секунде.</p>
+        <div class="watch-note-compose"><input id="watch-note-input" type="text" maxlength="1000" placeholder="Что запомнить в этой сцене?"><button id="watch-note-save" class="ghost-btn accent">Сохранить</button></div>
+        <div id="watch-notes-list" class="watch-notes-list"></div>
+      </div>
+    </div>
+  </div>
 
   <div id="hotkeys-modal" class="hotkeys-modal">
-    <div class="hotkeys-card">
+    <div class="hotkeys-card hk-wide">
       <header class="st-head">
         <div class="st-titles">
           <b>Горячие клавиши</b>
@@ -549,7 +678,17 @@
         <span>Нажмите «Изменить», затем нажмите нужную комбинацию. Esc — отмена, Backspace — убрать.</span>
         <button id="btn-hotkeys-reset" class="ghost-btn">Сбросить</button>
       </div>
-      <div id="hotkeys-list" class="hotkeys-body"></div>
+      <div class="hk-body">
+        <aside class="st-sidebar hk-side">
+          <div class="st-side-cap">Разделы</div>
+          <div class="settings-nav-list" id="hotkeys-nav-list">
+            <button class="settings-nav-item active" data-hk-filter="all">Все</button><button class="settings-nav-item" data-hk-filter="Окно">Окно</button><button class="settings-nav-item" data-hk-filter="Плеер">Плеер</button><button class="settings-nav-item" data-hk-filter="Программа">Программа</button><button class="settings-nav-item" data-hk-filter="Навигация">Навигация</button>
+          </div>
+        </aside>
+        <div class="hk-content">
+          <div id="hotkeys-list" class="hotkeys-body"></div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -558,7 +697,7 @@
       <header class="st-head">
         <div class="st-titles">
           <b>Скриншоты</b>
-          <i>Скриншоты которые вы сохранили</i>
+          <i>Ваши снимки страниц AnimeOn</i>
         </div>
         <button id="btn-close-screenshots" title="Закрыть (Esc)">
           <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
@@ -593,6 +732,15 @@
     </div>
   </div>
 
+  <div id="action-confirm" class="action-confirm" hidden role="dialog" aria-modal="true" aria-labelledby="action-confirm-title" aria-describedby="action-confirm-message">
+    <div class="action-confirm-card">
+      <span class="action-confirm-mark" aria-hidden="true">!</span>
+      <h2 id="action-confirm-title">Подтверждение</h2>
+      <p id="action-confirm-message"></p>
+      <div class="action-confirm-actions"><button id="action-confirm-cancel" class="ghost-btn">Отмена</button><button id="action-confirm-accept" class="ghost-btn danger-outline">Продолжить</button></div>
+    </div>
+  </div>
+
   <div id="command-palette">
     <div class="command-card">
       <div class="command-top"><span>Быстрые команды</span><kbd>Ctrl K</kbd></div>
@@ -607,10 +755,9 @@
   <div id="progress"></div>
 
   <div id="view-area">
-    <webview id="wv" class="tab-active" allowpopups partition="persist:animeon" webpreferences="webSecurity=no,contextIsolation=yes,sandbox=no,allowRunningInsecureContent=yes"></webview>
+    <webview id="wv" class="tab-active" allowpopups partition="persist:animeon" webpreferences="webSecurity=yes,contextIsolation=yes,sandbox=yes,allowRunningInsecureContent=no"></webview>
   </div>
 
-  <script src="renderer/features.js"></script>
-  <script type="module" src="renderer/index.js"></script>
+  <script type="module" src="renderer/app.js"></script>
 </body>
 </html>
