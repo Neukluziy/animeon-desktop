@@ -1,19 +1,20 @@
 {
   "name": "animeon-desktop",
   "productName": "AnimeOn",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "AnimeOn desktop",
   "main": "main.js",
   "author": "Neukluziy",
   "license": "MIT",
   "scripts": {
     "start": "electron .",
-    "icon": "powershell -NoProfile -ExecutionPolicy Bypass -File tools\\png-to-ico.ps1",
+    "check": "node tools/check.js",
+    "test": "node --test",
     "dist": "electron-builder --win"
   },
   "devDependencies": {
-    "electron": "33.2.0",
-    "electron-builder": "^25.1.8"
+    "electron": "^44.5.1",
+    "electron-builder": "^26.15.3"
   },
   "build": {
     "appId": "co.animeon.desktop",
@@ -70,5 +71,8 @@
         ]
       }
     ]
+  },
+  "allowScripts": {
+    "electron@44.5.1": true
   }
 }
