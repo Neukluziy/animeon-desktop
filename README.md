@@ -77,7 +77,7 @@ npm run dist
 Официальные сайты:
 
 - https://animeon.cc
-- https://v2.animeon.co
+- https://v2.animeon.co [РФ]
 
 Telegram:
 
