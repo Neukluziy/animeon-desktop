@@ -9,7 +9,7 @@ AnimeOn Desktop — приложение для Windows, которое позв
 
 ## 👤 Автор на AnimeOn
 
-[Neukluziy](https://animeon.cc/user/dsizer)
+[Нажми](https://animeon.cc/user/dsizer)
 
 ## 📥 Установка
 
