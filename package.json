@@ -1,7 +1,7 @@
 {
   "name": "animeon-desktop",
   "productName": "AnimeOn",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "description": "AnimeOn desktop",
   "main": "main.js",
   "author": "Neukluziy",
@@ -14,7 +14,7 @@
   },
   "devDependencies": {
     "electron": "^44.5.1",
-    "electron-builder": "^26.15.3"
+    "electron-builder": "^20.23.1"
   },
   "build": {
     "appId": "co.animeon.desktop",
