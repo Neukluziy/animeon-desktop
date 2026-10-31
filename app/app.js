@@ -1,20 +1,26 @@
-const { app, BrowserWindow, ipcMain, shell, Tray, Notification, screen, globalShortcut, session, dialog, nativeImage, clipboard } = require('electron');
+const { app, BrowserWindow, ipcMain, webContents, shell, Tray, Notification, screen, globalShortcut, session, dialog, nativeImage, clipboard, safeStorage } = require('electron');
 const { createUpdateManager } = require('./update-manager');
 const { createMainWindowFactory } = require('./main-window');
 const { createAccessKeyManager } = require('./access-key-manager');
+const { createUserDataStore } = require('./user-data-store');
 const { createWatchLibrary } = require('./watch-library');
 const { createNetworkManager } = require('./network-manager');
 const { createSettingsIpc } = require('./settings-ipc');
 const { createMediaController } = require('./media-controller');
 const path = require('node:path');
 const fs = require('node:fs');
+const { accountPartition, normalizeAccounts, createAccount } = require('../shared/accounts');
+const { MAIN_WINDOW_ID, MAX_APP_WINDOWS, normalizeWindowStates } = require('../shared/window-state');
+const { randomUUID } = require('node:crypto');
 const { fileURLToPath } = require('node:url');
 
 const { DiscordRPC } = require('./discord-rpc');
 const { SITE_RE, TELEGRAM_RE, APP_VERSION, compareVersions } = require('./modules');
 const { parseProxyEndpoint, buildDiscordActivity, DEFAULT_DISCORD_RPC_SETTINGS } = require('./utils');
-const { API_BASE, API_VERSION, request: apiRequest, get: apiGet, post: apiPost, health: apiHealth } = require('./api-client');
+const { API_BASE, API_SESSION_PATH, API_VERSION, request: apiRequest, get: apiGet, post: apiPost, health: apiHealth } = require('./api-client');
 const configPath = path.join(app.getPath('userData'), 'config.json');
+const logPath = path.join(app.getPath('userData'), 'animeon.log');
+const userDataStore = createUserDataStore({ userDataPath: app.getPath('userData'), fs, path });
 const accessKeyPath = path.join(app.getPath('userData'), 'access-key.json');
 const screenshotsDir = path.join(app.getPath('pictures'), 'AnimeOn');
 
@@ -110,11 +116,16 @@ let config = {
   lastGoodVersion: app.getVersion(),
   rollbackVersion: null,
   discordRpc: { ...DEFAULT_DISCORD_RPC_SETTINGS },
+  accounts: [],
+  activeAccountId: 'default',
+  windowStates: {},
 };
 
 try {
   Object.assign(config, JSON.parse(fs.readFileSync(configPath, 'utf8')));
 } catch {}
+userDataStore.load(config);
+normalizeAccounts(config);
 if (!Array.isArray(config.siteList) || config.siteList.length < 2) {
   config.siteList = [
     { id: 'one', url: 'https://animeon.cc/', label: 'animeon.cc' },
@@ -146,6 +157,7 @@ if (!Array.isArray(config.tabs)) config.tabs = [];
 if (!Number.isInteger(config.activeTab)) config.activeTab = 0;
 if (typeof config.tabsFixedV2 !== 'boolean') config.tabsFixedV2 = false;
 if (!config.tabsFixedV2) { config.tabs = []; config.activeTab = 0; config.tabsFixedV2 = true; }
+normalizeWindowStates(config);
 if (!config.sleepTimer || typeof config.sleepTimer !== 'object') config.sleepTimer = { enabled:false, minutes:0, action:'pause' };
 if (!Array.isArray(config.errorLog)) config.errorLog = [];
 if (typeof config.doNotDisturb !== 'boolean') config.doNotDisturb = false;
@@ -196,9 +208,20 @@ function buildVisualCss() {
 function saveConfig() {
   try {
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
-    fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
-  } catch {}
+    userDataStore.save(config);
+    fs.writeFileSync(configPath, JSON.stringify(userDataStore.stripFromConfig(config), null, 2));
+  } catch (error) {
+    try {
+      fs.appendFileSync(logPath, JSON.stringify({
+        time: new Date().toISOString(),
+        level: 'error',
+        message: 'Failed to save app data',
+        meta: { error: String(error?.message || error) },
+      }) + '\n', 'utf8');
+    } catch {}
+  }
 }
+saveConfig();
 
 if (Object.hasOwn(config, 'watchStats')) {
   delete config.watchStats;
@@ -216,7 +239,13 @@ function applySideEffects(patch) {
     try { app.setLoginItemSettings({ openAtLogin: !!config.autostart, path: process.execPath, args: [] }); } catch {}
   }
   if ('tray' in patch) ensureTray();
-  if ('alwaysOnTop' in patch && win && !win.isDestroyed()) win.setAlwaysOnTop(!!config.alwaysOnTop);
+  if ('alwaysOnTop' in patch) {
+    for (const browserWindow of BrowserWindow.getAllWindows()) {
+      if (windowIdsByBrowserId.has(browserWindow.id) && !browserWindow.isDestroyed()) {
+        browserWindow.setAlwaysOnTop(!!config.alwaysOnTop);
+      }
+    }
+  }
   if ('hotkeys' in patch) registerGlobalHotkeys();
 }
 
@@ -239,6 +268,42 @@ let powerPausedBySystem = false;
 let discordRPC = null;
 let discordActivityTimer = null;
 let discordRpcRevision = 0;
+const windowIdsByBrowserId = new Map();
+const windowSiteContents = new Map();
+const approvedCloseWindows = new Set();
+function windowIdForBrowserWindow(browserWindow) {
+  return browserWindow && !browserWindow.isDestroyed()
+    ? windowIdsByBrowserId.get(browserWindow.id) || null
+    : null;
+}
+function getWindowContext(event) {
+  if (!isTrustedAppEvent(event)) return null;
+  try {
+    const browserWindow = BrowserWindow.fromWebContents(event.sender);
+    const id = windowIdForBrowserWindow(browserWindow);
+    return id ? config.windowStates[id] || null : null;
+  } catch {
+    return null;
+  }
+}
+function getWindowSiteContents(event) {
+  if (!isTrustedAppEvent(event)) return null;
+  try {
+    const id = windowIdForBrowserWindow(BrowserWindow.fromWebContents(event.sender));
+    const guest = id ? windowSiteContents.get(id) : null;
+    return guest && !guest.isDestroyed() ? guest : null;
+  } catch {
+    return null;
+  }
+}
+function clearWindowSiteContents(event) {
+  try {
+    const id = windowIdForBrowserWindow(BrowserWindow.fromWebContents(event.sender));
+    const guest = id ? windowSiteContents.get(id) : null;
+    if (guest === siteWc) siteWc = null;
+    if (id) windowSiteContents.delete(id);
+  } catch {}
+}
 const accessKeyManager = createAccessKeyManager({
   app,
   fs,
@@ -246,6 +311,7 @@ const accessKeyManager = createAccessKeyManager({
   path,
   session,
   accessKeyPath,
+  safeStorage,
   config,
   sitePattern: SITE_RE,
   isTrustedAppEvent,
@@ -258,6 +324,7 @@ const networkManager = createNetworkManager({
   session,
   ipcMain,
   config,
+  accountPartition,
   parseProxyEndpoint,
   saveConfig,
   writeLog,
@@ -296,6 +363,9 @@ const settingsIpc = createSettingsIpc({
   session,
   getWindow: () => win,
   getSiteContents: () => siteWc,
+  getWindowContext,
+  getWindowSiteContents,
+  getAllSiteContents: () => [...windowSiteContents.values()].filter((guest) => guest && !guest.isDestroyed()),
   saveConfig,
   applySideEffects,
   applyDiscordRpcRuntime,
@@ -311,7 +381,6 @@ const settingsIpc = createSettingsIpc({
   discordDefaults: DEFAULT_DISCORD_RPC_SETTINGS,
 });
 const registeredHotkeyAccelerators = new Set();
-const logPath = path.join(app.getPath('userData'), 'animeon.log');
 function writeLog(level, message, meta) {
   try {
     fs.mkdirSync(path.dirname(logPath), { recursive: true });
@@ -363,10 +432,18 @@ function scheduleCacheCleanup() {
   setTimeout(async()=>{
     try {
       const max=Number(config.cacheLimitMB)||512;
-      const usage=await session.defaultSession.getCacheSize();
-      if(usage>max*1048576) await session.defaultSession.clearCache();
+      const sessions = getAccountSessions();
+      const sizes = await Promise.all(sessions.map((siteSession) => siteSession.getCacheSize()));
+      if(sizes.reduce((total, size) => total + size, 0)>max*1048576) await Promise.all(sessions.map((siteSession) => siteSession.clearCache()));
     } catch(e){ writeLog('warn','Cache cleanup failed',{error:String(e?.message||e)}); }
   }, 2500);
+}
+function getAccountSessions() {
+  const sessions = new Set([session.defaultSession]);
+  for (const account of config.accounts) {
+    try { sessions.add(session.fromPartition(accountPartition(account.id))); } catch {}
+  }
+  return [...sessions];
 }
 setInterval(() => scheduleCacheCleanup(), 15 * 60 * 1000);
 const PROTOCOL = 'animeon';
@@ -443,11 +520,18 @@ app.on('second-instance', (_, argv) => {
   if (deepLink) openDeepLink(deepLink);
 });
 
-function loadWindowState() {
+function loadWindowState(windowId = MAIN_WINDOW_ID) {
   const defaults = { width: 1360, height: 850, x: undefined, y: undefined, maximized: false };
   try {
-    const p = path.join(app.getPath('userData'), 'window-state.json');
-    const data = JSON.parse(fs.readFileSync(p, 'utf8'));
+    let data = config.windowStates?.[windowId]?.bounds;
+    if (!data) {
+      const p = path.join(app.getPath('userData'), 'window-state.json');
+      data = JSON.parse(fs.readFileSync(p, 'utf8'));
+      if (windowId !== MAIN_WINDOW_ID && Number.isFinite(Number(data.x)) && Number.isFinite(Number(data.y))) {
+        const offset = (Object.keys(config.windowStates).indexOf(windowId) + 1) * 36;
+        data = { ...data, x: Number(data.x) + offset, y: Number(data.y) + offset, maximized: false };
+      }
+    }
     const width = Math.max(480, Math.min(7680, Number(data.width) || defaults.width));
     const height = Math.max(360, Math.min(4320, Number(data.height) || defaults.height));
     let x = Number.isFinite(Number(data.x)) ? Number(data.x) : undefined;
@@ -465,14 +549,22 @@ function loadWindowState() {
   } catch { return defaults; }
 }
 
-function saveWindowState() {
-  if (!win || win.isDestroyed() || win.isMinimized() || win.isFullScreen()) return;
+function saveWindowState(windowId = MAIN_WINDOW_ID, targetWindow = win) {
+  if (!targetWindow || targetWindow.isDestroyed() || targetWindow.isMinimized() || targetWindow.isFullScreen()) return;
   try {
-    const bounds = win.getNormalBounds();
-    fs.writeFileSync(path.join(app.getPath('userData'), 'window-state.json'), JSON.stringify({
+    const bounds = targetWindow.getNormalBounds();
+    const state = {
       width: bounds.width, height: bounds.height, x: bounds.x, y: bounds.y,
-      maximized: win.isMaximized(),
-    }));
+      maximized: targetWindow.isMaximized(),
+    };
+    if (windowId === MAIN_WINDOW_ID) {
+      fs.writeFileSync(path.join(app.getPath('userData'), 'window-state.json'), JSON.stringify(state));
+      return;
+    }
+    if (config.windowStates[windowId]) {
+      config.windowStates[windowId].bounds = state;
+      saveConfig();
+    }
   } catch {}
 }
 
@@ -579,12 +671,41 @@ const createWindow = createMainWindowFactory({
   loadWindowState,
   handleLocalHotkey,
   isQuitting: () => quitting,
-  setWindow: (value) => { win = value; },
+  setWindow: (value, windowId) => {
+    win = value;
+    windowIdsByBrowserId.set(value.id, windowId);
+  },
+  isWindowCloseApproved: (windowId) => {
+    if (!approvedCloseWindows.has(windowId)) return false;
+    approvedCloseWindows.delete(windowId);
+    return true;
+  },
+  onWindowClosed: (windowId, browserWindow) => {
+    const guest = windowSiteContents.get(windowId);
+    if (guest === siteWc) siteWc = null;
+    windowSiteContents.delete(windowId);
+    windowIdsByBrowserId.delete(browserWindow.id);
+    if (windowId !== MAIN_WINDOW_ID && !quitting) {
+      delete config.windowStates[windowId];
+      saveConfig();
+    }
+    if (win === browserWindow) {
+      win = BrowserWindow.getAllWindows().find((item) => windowIdsByBrowserId.has(item.id)) || null;
+      const focusedId = windowIdForBrowserWindow(win);
+      siteWc = focusedId ? windowSiteContents.get(focusedId) || null : null;
+    }
+  },
   ensureTray,
   saveWindowState,
   setupJumpList,
   applyNetworkSettings,
-  setSiteContents: (value) => { siteWc = value; },
+  setSiteContents: (value, hostWebContents) => {
+    const browserWindow = BrowserWindow.fromWebContents(hostWebContents);
+    const windowId = windowIdForBrowserWindow(browserWindow);
+    if (!windowId) return;
+    windowSiteContents.set(windowId, value);
+    if (browserWindow.isFocused()) siteWc = value;
+  },
   setTaskbarOverlay,
   applyPlaybackPreferences,
   applyVolumeToGuest,
@@ -596,6 +717,41 @@ const createWindow = createMainWindowFactory({
   isAuthFlowUrl,
   shell,
   openTelegramExternal,
+});
+app.on('browser-window-focus', (_event, focusedWindow) => {
+  const focusedId = windowIdForBrowserWindow(focusedWindow);
+  if (!focusedId) return;
+  win = focusedWindow;
+  const guest = focusedId ? windowSiteContents.get(focusedId) : null;
+  siteWc = guest && !guest.isDestroyed() ? guest : null;
+});
+app.on('activate', () => {
+  if (!BrowserWindow.getAllWindows().some((item) => windowIdsByBrowserId.has(item.id))) {
+    createWindow({ windowId: MAIN_WINDOW_ID, initializeNetwork: true });
+  }
+});
+ipcMain.handle('win:new', (event) => {
+  const source = getWindowContext(event);
+  if (!source) return { ok: false, error: 'untrusted sender' };
+  if (Object.keys(config.windowStates).length >= MAX_APP_WINDOWS) {
+    return { ok: false, error: `Можно открыть не более ${MAX_APP_WINDOWS} окон` };
+  }
+  const id = randomUUID();
+  const currentTab = source.tabs[source.activeTab] || source.tabs[0];
+  config.windowStates[id] = {
+    accountId: source.accountId,
+    tabs: currentTab ? [{ ...currentTab }] : [],
+    activeTab: 0,
+  };
+  saveConfig();
+  try {
+    createWindow({ windowId: id });
+    return { ok: true, windowId: id };
+  } catch (error) {
+    delete config.windowStates[id];
+    saveConfig();
+    return { ok: false, error: String(error?.message || 'Не удалось создать окно') };
+  }
 });
 
 let thumbarIcons = null;
@@ -639,9 +795,17 @@ function updateThumbar(state) {
 function toggleAlwaysOnTop() {
   if (!win || win.isDestroyed()) return;
   config.alwaysOnTop = !win.isAlwaysOnTop();
-  win.setAlwaysOnTop(config.alwaysOnTop);
+  for (const browserWindow of BrowserWindow.getAllWindows()) {
+    if (windowIdsByBrowserId.has(browserWindow.id) && !browserWindow.isDestroyed()) {
+      browserWindow.setAlwaysOnTop(config.alwaysOnTop);
+    }
+  }
   saveConfig();
-  win.webContents.send('always-on-top', config.alwaysOnTop);
+  for (const browserWindow of BrowserWindow.getAllWindows()) {
+    if (windowIdsByBrowserId.has(browserWindow.id) && !browserWindow.isDestroyed()) {
+      browserWindow.webContents.send('always-on-top', config.alwaysOnTop);
+    }
+  }
 }
 
 function toggleTrayWindow() {
@@ -778,7 +942,19 @@ function showMainWindow() {
 
 function ensureTray() {
   if (tray) return;
-  tray = new Tray(path.join(__dirname, '../assets', 'logo.png'));
+  const logo = nativeImage.createFromPath(path.join(__dirname, '../assets', 'logo.png'));
+  const { width, height } = logo.getSize();
+  const insetX = Math.round(width * 0.15);
+  const insetY = Math.round(height * 0.15);
+  const icon = logo.isEmpty()
+    ? path.join(__dirname, '../assets', 'logo.png')
+    : logo.crop({
+        x: insetX,
+        y: insetY,
+        width: width - insetX * 2,
+        height: height - insetY * 2,
+      }).resize({ width: 32, height: 32 });
+  tray = new Tray(icon);
   tray.setToolTip('AnimeOn');
   tray.on('click', () => toggleTrayMenu());
   tray.on('double-click', () => showMainWindow());
@@ -879,20 +1055,155 @@ ipcMain.on('tray-action', (_, action) => {
 });
 
 ipcMain.on('cfg:get', (e) => {
-  if (!isTrustedAppEvent(e)) { e.returnValue = null; return; }
-  e.returnValue = config;
+  const context = getWindowContext(e);
+  if (!context) { e.returnValue = null; return; }
+  const snapshot = { ...config };
+  delete snapshot.windowStates;
+  snapshot.activeAccountId = context.accountId;
+  snapshot.tabs = context.tabs;
+  snapshot.activeTab = context.activeTab;
+  e.returnValue = snapshot;
 });
 
 ipcMain.on('cfg:set', (event, patch) => {
   if (!isTrustedAppEvent(event) || !patch || typeof patch !== 'object' || Array.isArray(patch)) return;
   const safePatch = { ...patch };
   delete safePatch.accessKeyEnabled;
+  delete safePatch.accounts;
+  delete safePatch.activeAccountId;
+  delete safePatch.windowStates;
+  delete safePatch.tabs;
+  delete safePatch.activeTab;
   Object.assign(config, safePatch);
   saveConfig();
   applySideEffects(safePatch);
 });
 
+function configureSitePermissions(siteSession) {
+  const allowedPermissions = new Set(['notifications', 'fullscreen']);
+  const isTrustedSiteContents = (wc) => {
+    try { return SITE_RE.test(wc.getURL()); } catch { return false; }
+  };
+  siteSession.setPermissionRequestHandler((wc, permission, callback) => {
+    callback(isTrustedSiteContents(wc) && allowedPermissions.has(permission));
+  });
+  siteSession.setPermissionCheckHandler((wc, permission) => {
+    return !!wc && isTrustedSiteContents(wc) && allowedPermissions.has(permission);
+  });
+}
+
+ipcMain.handle('accounts:list', (event) => {
+  const context = getWindowContext(event);
+  if (!context) return { ok: false, error: 'untrusted sender' };
+  return {
+    ok: true,
+    activeAccountId: context.accountId,
+    accounts: config.accounts.map(({ id, name }) => ({ id, name })),
+  };
+});
+
+ipcMain.handle('accounts:add', async (event, name) => {
+  const context = getWindowContext(event);
+  if (!context) return { ok: false, error: 'untrusted sender' };
+  const account = createAccount(name);
+  if (!account) return { ok: false, error: 'Укажи название аккаунта' };
+  const previousActiveId = context.accountId;
+  config.accounts.push(account);
+  context.accountId = account.id;
+  if (context === config.windowStates[MAIN_WINDOW_ID]) config.activeAccountId = account.id;
+  const accountSession = session.fromPartition(account.partition);
+  configureSitePermissions(accountSession);
+  accessKeyManager.guardSession(accountSession);
+  try {
+    await applyNetworkSettings([accountSession]);
+  } catch (error) {
+    config.accounts.pop();
+    context.accountId = previousActiveId;
+    if (context === config.windowStates[MAIN_WINDOW_ID]) config.activeAccountId = previousActiveId;
+    writeLog('error', 'Failed to initialize account network settings', { error: String(error?.message || error) });
+    return { ok: false, error: 'Не удалось применить сетевые настройки к аккаунту' };
+  }
+  clearWindowSiteContents(event);
+  saveConfig();
+  return { ok: true, account };
+});
+
+ipcMain.handle('accounts:activate', async (event, id) => {
+  const context = getWindowContext(event);
+  if (!context) return { ok: false, error: 'untrusted sender' };
+  const account = config.accounts.find((item) => item.id === String(id || ''));
+  if (!account) return { ok: false, error: 'Аккаунт не найден' };
+  const accountSession = session.fromPartition(accountPartition(account.id));
+  configureSitePermissions(accountSession);
+  accessKeyManager.guardSession(accountSession);
+  try {
+    await applyNetworkSettings([accountSession]);
+  } catch (error) {
+    writeLog('error', 'Failed to apply network settings to account', { error: String(error?.message || error) });
+    return { ok: false, error: 'Не удалось применить сетевые настройки к аккаунту' };
+  }
+  context.accountId = account.id;
+  if (context === config.windowStates[MAIN_WINDOW_ID]) config.activeAccountId = account.id;
+  clearWindowSiteContents(event);
+  saveConfig();
+  return { ok: true, activeAccountId: account.id };
+});
+
+ipcMain.handle('accounts:delete', async (event, id) => {
+  if (!getWindowContext(event)) return { ok: false, error: 'untrusted sender' };
+  const accountId = String(id || '');
+  if (Object.values(config.windowStates).some((state) => state.accountId === accountId)) {
+    return { ok: false, error: 'Сначала переключите с этого аккаунта все открытые окна' };
+  }
+  if (config.accounts.length <= 1) return { ok: false, error: 'Нельзя удалить последний аккаунт' };
+  const index = config.accounts.findIndex((item) => item.id === accountId);
+  if (index < 0) return { ok: false, error: 'Аккаунт не найден' };
+  try {
+    const accountSession = session.fromPartition(accountPartition(accountId));
+    await accountSession.clearStorageData();
+    await accountSession.clearCache();
+    config.accounts.splice(index, 1);
+    saveConfig();
+    return { ok: true };
+  } catch (error) {
+    writeLog('error', 'Account session cleanup failed', { error: String(error?.message || error) });
+    return { ok: false, error: 'Не удалось очистить данные аккаунта' };
+  }
+});
+
+ipcMain.on('site:activate-webview', (event, id) => {
+  const context = getWindowContext(event);
+  if (!context) return;
+  const contentsId = Number(id);
+  if (!Number.isInteger(contentsId) || contentsId < 1) return;
+  const guest = webContents.fromId(contentsId);
+  if (!guest || guest.isDestroyed() || guest.hostWebContents !== event.sender) return;
+  try {
+    if (guest.session.getPartition() !== accountPartition(context.accountId)) return;
+    const url = guest.getURL();
+    if (url && !SITE_RE.test(url)) return;
+  } catch { return; }
+  const browserWindow = BrowserWindow.fromWebContents(event.sender);
+  const windowId = windowIdForBrowserWindow(browserWindow);
+  if (!windowId) return;
+  windowSiteContents.set(windowId, guest);
+  if (browserWindow.isFocused()) siteWc = guest;
+});
+
 accessKeyManager.registerIpc();
+
+ipcMain.handle('clipboard:write-text', (event, text) => {
+  if (!isTrustedAppEvent(event) || typeof text !== 'string' || text.length > 1000) {
+    return { ok: false, error: 'Не удалось скопировать цвет' };
+  }
+  try {
+    clipboard.writeText(text);
+    return { ok: true };
+  } catch (error) {
+    writeLog('error', 'Clipboard write failed', { error: String(error?.message || error) });
+    return { ok: false, error: 'Не удалось скопировать цвет' };
+  }
+});
 
 ipcMain.handle('discord:settings:set', (_, patch) => {
   if (!patch || typeof patch !== 'object') return { ok: false, error: 'invalid settings' };
@@ -931,81 +1242,117 @@ ipcMain.on('notify', (_, { title, body }) => {
   n.show();
 });
 
-ipcMain.on('win:minimize', () => win?.minimize());
-ipcMain.on('win:maximize-toggle', () => {
-  if (!win) return;
-  win.isMaximized() ? win.unmaximize() : win.maximize();
+ipcMain.on('win:minimize', (event) => {
+  if (!isTrustedAppEvent(event)) return;
+  BrowserWindow.fromWebContents(event.sender)?.minimize();
 });
-ipcMain.on('win:close', () => win?.close());
-ipcMain.on('win:fullscreen', () => {
-  if (!win) return;
-  win.setFullScreen(!win.isFullScreen());
+ipcMain.on('win:maximize-toggle', (event) => {
+  if (!isTrustedAppEvent(event)) return;
+  const browserWindow = BrowserWindow.fromWebContents(event.sender);
+  if (browserWindow) browserWindow.isMaximized() ? browserWindow.unmaximize() : browserWindow.maximize();
+});
+ipcMain.on('win:close', (event) => {
+  if (isTrustedAppEvent(event)) BrowserWindow.fromWebContents(event.sender)?.close();
+});
+ipcMain.on('win:fullscreen', (event) => {
+  if (!isTrustedAppEvent(event)) return;
+  const browserWindow = BrowserWindow.fromWebContents(event.sender);
+  if (browserWindow) browserWindow.setFullScreen(!browserWindow.isFullScreen());
 });
 
 networkManager.registerIpc();
 
-ipcMain.handle('api:health', async () => apiHealth());
-ipcMain.handle('api:get', async (_, path, query) => {
-  try { return await apiGet(path, query); }
+ipcMain.handle('api:health', async (event) => {
+  if (!isTrustedAppEvent(event)) return { ok: false, status: 0, error: 'untrusted sender' };
+  return apiHealth();
+});
+function apiSessionForEvent(event) {
+  const context = getWindowContext(event);
+  if (!context) return null;
+  const account = config.accounts.find((item) => item.id === context.accountId);
+  return session.fromPartition(account?.partition || 'persist:animeon');
+}
+ipcMain.handle('api:get', async (event, path, query) => {
+  const apiSession = apiSessionForEvent(event);
+  if (!apiSession) return { ok: false, status: 0, error: 'untrusted sender' };
+  try { return await apiGet(path, query, { session: apiSession }); }
   catch (e) { return { ok:false, status:0, ms:0, error:String(e?.message || e) }; }
 });
-ipcMain.handle('api:post', async (_, path, body) => {
-  try { return await apiPost(path, body); }
+ipcMain.handle('api:post', async (event, path, body) => {
+  const apiSession = apiSessionForEvent(event);
+  if (!apiSession) return { ok: false, status: 0, error: 'untrusted sender' };
+  try { return await apiPost(path, body, { session: apiSession }); }
   catch (e) { return { ok:false, status:0, ms:0, error:String(e?.message || e) }; }
 });
-ipcMain.handle('api:request', async (_, path, options) => {
-  try { return await apiRequest(path, options || {}); }
+ipcMain.handle('api:request', async (event, path, options) => {
+  const apiSession = apiSessionForEvent(event);
+  if (!apiSession) return { ok: false, status: 0, error: 'untrusted sender' };
+  try { return await apiRequest(path, { ...(options || {}), session: apiSession }); }
   catch (e) { return { ok:false, status:0, ms:0, error:String(e?.message || e) }; }
 });
-ipcMain.handle('animeon:search', async (_, query, options = {}) => {
+ipcMain.handle('animeon:search', async (event, query, options = {}) => {
+  const apiSession = apiSessionForEvent(event);
+  if (!apiSession) return { ok: false, items: [], query: String(query || ''), error: 'untrusted sender' };
   try {
     const q = String(query || '').trim();
     if (!q) return { ok: true, items: [], query: '' };
-    const result = await apiGet('/api/search', { q, query: q, page: options.page || 1, limit: options.limit || 20 });
+    const result = await apiGet('/api/search', { q, query: q, page: options.page || 1, limit: options.limit || 20 }, { session: apiSession });
     return normalizeAnimeCollection(result, q);
   } catch (e) {
     return { ok: false, items: [], query: String(query || ''), error: String(e?.message || e) };
   }
 });
 
-ipcMain.handle('animeon:filters', async () => {
+ipcMain.handle('animeon:filters', async (event) => {
+  const apiSession = apiSessionForEvent(event);
+  if (!apiSession) return { ok: false, filters: {}, error: 'untrusted sender' };
   try {
-    const result = await apiGet('/api/anime/filters');
+    const result = await apiGet('/api/anime/filters', null, { session: apiSession });
     return { ...result, filters: result.data?.filters || result.data || {} };
   } catch (e) { return { ok:false, filters:{}, error:String(e?.message || e) }; }
 });
 
-ipcMain.handle('animeon:schedule', async (_, options = {}) => {
+ipcMain.handle('animeon:schedule', async (event, options = {}) => {
+  const apiSession = apiSessionForEvent(event);
+  if (!apiSession) return { ok: false, schedule: [], error: 'untrusted sender' };
   try {
-    const result = await apiGet('/api/anime/schedule', options);
+    const result = await apiGet('/api/anime/schedule', options, { session: apiSession });
     return { ...result, schedule: normalizeDataList(result.data) };
   } catch (e) { return { ok:false, schedule:[], error:String(e?.message || e) }; }
 });
 
-ipcMain.handle('animeon:watching-now', async (_, options = {}) => {
+ipcMain.handle('animeon:watching-now', async (event, options = {}) => {
+  const apiSession = apiSessionForEvent(event);
+  if (!apiSession) return { ok: false, items: [], error: 'untrusted sender' };
   try {
-    const result = await apiGet('/api/anime/watching-now', options);
+    const result = await apiGet('/api/anime/watching-now', options, { session: apiSession });
     return { ...result, items: normalizeDataList(result.data) };
   } catch (e) { return { ok:false, items:[], error:String(e?.message || e) }; }
 });
 
-ipcMain.handle('animeon:watchlist-counts', async () => {
+ipcMain.handle('animeon:watchlist-counts', async (event) => {
+  const apiSession = apiSessionForEvent(event);
+  if (!apiSession) return { ok: false, counts: {}, error: 'untrusted sender' };
   try {
-    const result = await apiGet('/api/user/watchlist/counts');
+    const result = await apiGet('/api/user/watchlist/counts', null, { session: apiSession });
     return { ...result, counts: result.data?.counts || result.data || {} };
   } catch (e) { return { ok:false, counts:{}, error:String(e?.message || e) }; }
 });
 
-ipcMain.handle('animeon:history', async (_, options = {}) => {
+ipcMain.handle('animeon:history', async (event, options = {}) => {
+  const apiSession = apiSessionForEvent(event);
+  if (!apiSession) return { ok: false, items: [], error: 'untrusted sender' };
   try {
-    const result = await apiGet('/api/user/history', options);
+    const result = await apiGet('/api/user/history', options, { session: apiSession });
     return { ...result, items: normalizeDataList(result.data) };
   } catch (e) { return { ok:false, items:[], error:String(e?.message || e) }; }
 });
 
-ipcMain.handle('animeon:notifications', async (_, options = {}) => {
+ipcMain.handle('animeon:notifications', async (event, options = {}) => {
+  const apiSession = apiSessionForEvent(event);
+  if (!apiSession) return { ok: false, items: [], error: 'untrusted sender' };
   try {
-    const result = await apiGet('/api/user/notifications', options);
+    const result = await apiGet('/api/user/notifications', options, { session: apiSession });
     return { ...result, items: normalizeDataList(result.data) };
   } catch (e) { return { ok:false, items:[], error:String(e?.message || e) }; }
 });
@@ -1033,10 +1380,12 @@ function normalizeAnimeCollection(result, query) {
   return { ...result, query, items };
 }
 
-ipcMain.handle('api:session', async () => {
+ipcMain.handle('api:session', async (event) => {
+  const apiSession = apiSessionForEvent(event);
+  if (!apiSession) return { ok: false, status: 0, authenticated: false, error: 'untrusted sender' };
   try {
-    const result = await apiGet('/api/auth/session');
-    return { ...result, authenticated: !!(result.ok && (result.data?.user || result.data?.authenticated || result.data?.session)) };
+    const result = await apiGet(API_SESSION_PATH, null, { session: apiSession });
+    return { ...result, authenticated: result.ok };
   } catch (e) {
     return { ok:false, status:0, ms:0, authenticated:false, error:String(e?.message || e) };
   }
@@ -1044,58 +1393,72 @@ ipcMain.handle('api:session', async () => {
 
 ipcMain.handle('app:clear-cache', async () => {
   try {
-    await session.defaultSession.clearCache();
-    await session.defaultSession.clearStorageData({ storages: ['serviceworkers', 'shadercache'] });
+    const sessions = getAccountSessions();
+    await Promise.all(sessions.map(async (siteSession) => {
+      await siteSession.clearCache();
+      await siteSession.clearStorageData({ storages: ['serviceworkers', 'shadercache'] });
+    }));
     if (win && !win.isDestroyed()) win.webContents.session.clearCache().catch(() => {});
     return { ok: true };
   } catch (e) { return { ok: false, error: String(e?.message || e) }; }
 });
 
-ipcMain.on('app:restart-webview', () => {
-  if (!win || win.isDestroyed()) return;
-  win.webContents.send('restart-webview');
+ipcMain.on('app:restart-webview', (event) => {
+  if (!isTrustedAppEvent(event)) return;
+  const browserWindow = BrowserWindow.fromWebContents(event.sender);
+  if (!browserWindow || browserWindow.isDestroyed()) return;
+  browserWindow.webContents.send('restart-webview');
   setTaskbarOverlay('none');
 });
 
 ipcMain.on('app:taskbar-overlay', (_, kind) => setTaskbarOverlay(kind));
-ipcMain.on('app:confirm-close-result', (_, ok) => {
-  if (!ok) return;
-  quitting = true;
-  if (tray) {
-    tray.destroy();
-    tray = null;
-  }
-  if (trayMenuWin && !trayMenuWin.isDestroyed()) trayMenuWin.destroy();
-  trayMenuWin = null;
-  if (win && !win.isDestroyed()) win.close();
-  app.quit();
+ipcMain.on('app:confirm-close-result', (event, ok) => {
+  if (!isTrustedAppEvent(event) || !ok) return;
+  const browserWindow = BrowserWindow.fromWebContents(event.sender);
+  if (!browserWindow || browserWindow.isDestroyed()) return;
+  const windowId = windowIdForBrowserWindow(browserWindow);
+  if (!windowId) return;
+  approvedCloseWindows.add(windowId);
+  browserWindow.close();
 });
-ipcMain.on('app:set-performance', (_, mode) => {
+ipcMain.on('app:set-performance', (event, mode) => {
+  if (!isTrustedAppEvent(event)) return;
   config.performance = ['performance','balanced','economy'].includes(mode) ? mode : 'balanced';
   saveConfig();
-  try { if (siteWc && !siteWc.isDestroyed()) siteWc.setBackgroundThrottling(config.performance === 'economy'); } catch {}
-  if (win && !win.isDestroyed()) win.webContents.send('performance-mode', config.performance);
+  for (const siteContents of windowSiteContents.values()) {
+    try { if (siteContents && !siteContents.isDestroyed()) siteContents.setBackgroundThrottling(config.performance === 'economy'); } catch {}
+  }
+  for (const browserWindow of BrowserWindow.getAllWindows()) {
+    if (windowIdsByBrowserId.has(browserWindow.id) && !browserWindow.isDestroyed()) {
+      browserWindow.webContents.send('performance-mode', config.performance);
+    }
+  }
 });
 
 watchLibrary.registerIpc();
-ipcMain.on('site:navigate', (_, url) => {
-  if (!siteWc || siteWc.isDestroyed() || !SITE_RE.test(String(url))) return;
-  try { siteWc.loadURL(String(url)); } catch {}
+ipcMain.on('site:navigate', (event, url) => {
+  const siteContents = getWindowSiteContents(event);
+  if (!siteContents || !SITE_RE.test(String(url))) return;
+  try { siteContents.loadURL(String(url)); } catch {}
 });
 
 mediaController.registerIpc();
 
-ipcMain.on('app:open-browser', () => {
-  try { if (siteWc && !siteWc.isDestroyed()) shell.openExternal(siteWc.getURL()).catch(() => {}); } catch {}
+ipcMain.on('app:open-browser', (event) => {
+  try {
+    const siteContents = getWindowSiteContents(event);
+    if (siteContents) shell.openExternal(siteContents.getURL()).catch(() => {});
+  } catch {}
 });
 
 startMediaPolling();
 ipcMain.on('app:always-on-top', toggleAlwaysOnTop);
-ipcMain.on('app:zoom', (_, delta) => {
-  if (!siteWc || siteWc.isDestroyed()) return;
+ipcMain.on('app:zoom', (event, delta) => {
+  const siteContents = getWindowSiteContents(event);
+  if (!siteContents) return;
   const d = Number(delta) || 0;
-  const current = siteWc.getZoomFactor();
-  siteWc.setZoomFactor(d === 0 ? 1 : Math.max(0.5, Math.min(3, current + d)));
+  const current = siteContents.getZoomFactor();
+  siteContents.setZoomFactor(d === 0 ? 1 : Math.max(0.5, Math.min(3, current + d)));
 });
 ipcMain.on('app:register-hotkeys', registerGlobalHotkeys);
 ipcMain.handle('hotkeys:set', (_, hotkeys) => {
@@ -1110,8 +1473,8 @@ ipcMain.handle('hotkeys:set', (_, hotkeys) => {
   const result = registerGlobalHotkeys();
   return { hotkeys: config.hotkeys, ...result };
 });
-ipcMain.on('app:toggle-devtools', () => {
-  const wc = siteWc;
+ipcMain.on('app:toggle-devtools', (event) => {
+  const wc = getWindowSiteContents(event);
   if (!wc || wc.isDestroyed()) return;
   try {
     if (wc.isDevToolsOpened()) { wc.closeDevTools(); return; }
@@ -1161,12 +1524,14 @@ ipcMain.handle('site:apply-css', async (_, css) => {
   }
 });
 
-ipcMain.on('taskbar-progress', (_, value) => {
-  if (!win || win.isDestroyed()) return;
+ipcMain.on('taskbar-progress', (event, value) => {
+  if (!isTrustedAppEvent(event)) return;
+  const browserWindow = BrowserWindow.fromWebContents(event.sender);
+  if (!browserWindow || browserWindow.isDestroyed()) return;
   const n = Number(value);
-  if (n < 0) win.setProgressBar(-1);
-  else if (n >= 1) win.setProgressBar(1);
-  else win.setProgressBar(Math.max(0, Math.min(1, n)), { mode: 'normal' });
+  if (n < 0) browserWindow.setProgressBar(-1);
+  else if (n >= 1) browserWindow.setProgressBar(1);
+  else browserWindow.setProgressBar(Math.max(0, Math.min(1, n)), { mode: 'normal' });
 });
 
 ipcMain.on('app:info', (e) => {
@@ -1182,7 +1547,10 @@ app.whenReady().then(async () => {
     try { app.setLoginItemSettings({ openAtLogin: false }); } catch {}
     saveConfig();
   }
-  createWindow();
+  createWindow({ windowId: MAIN_WINDOW_ID });
+  for (const windowId of Object.keys(config.windowStates)) {
+    if (windowId !== MAIN_WINDOW_ID) createWindow({ windowId });
+  }
   ensureTray();
 
   const { powerMonitor } = require('electron');
@@ -1196,20 +1564,10 @@ app.whenReady().then(async () => {
   discordActivityTimer = setInterval(() => updateDiscordActivity(), 15000);
   updateDiscordActivity();
 
-  const allowedPermissions = new Set(['notifications', 'fullscreen']);
-  const isTrustedSiteContents = (wc) => {
-    try { return SITE_RE.test(wc.getURL()); } catch { return false; }
-  };
-  const configureSitePermissions = (siteSession) => {
-    siteSession.setPermissionRequestHandler((wc, permission, callback) => {
-      callback(isTrustedSiteContents(wc) && allowedPermissions.has(permission));
-    });
-    siteSession.setPermissionCheckHandler((wc, permission) => {
-      return !!wc && isTrustedSiteContents(wc) && allowedPermissions.has(permission);
-    });
-  };
   configureSitePermissions(session.defaultSession);
-  try { configureSitePermissions(session.fromPartition('persist:animeon')); } catch {}
+  for (const account of config.accounts) {
+    try { configureSitePermissions(session.fromPartition(accountPartition(account.id))); } catch {}
+  }
 
   process.on('uncaughtException', (e) => writeLog('error', 'uncaughtException', { error: String(e?.stack || e) }));
   process.on('unhandledRejection', (e) => writeLog('error', 'unhandledRejection', { error: String(e?.stack || e) }));
@@ -1268,7 +1626,10 @@ function updateDiscordActivity() {
 
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
-  saveWindowState();
+  for (const browserWindow of BrowserWindow.getAllWindows()) {
+    const windowId = windowIdForBrowserWindow(browserWindow);
+    if (windowId) saveWindowState(windowId, browserWindow);
+  }
   if (discordActivityTimer) clearInterval(discordActivityTimer);
   if (discordRPC) discordRPC.disconnect();
 });

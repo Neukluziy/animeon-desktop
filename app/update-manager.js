@@ -194,6 +194,7 @@ async function downloadUpdate() {
         const logs = Array.isArray(config.errorLog) ? config.errorLog : [];
         logs.push({ type: 'update-download', message: JSON.stringify(logEntry) });
         config.errorLog = logs.slice(-200);
+        saveConfig();
       } catch {}
     }
     downloadedInstaller = dest;

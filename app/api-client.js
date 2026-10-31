@@ -1,6 +1,6 @@
-const { session } = require('electron');
-
 const API_BASE = 'https://api.animeon.cloud';
+const API_FALLBACK_BASES = ['https://api.animeon.co'];
+const API_SESSION_PATH = '/api/auth/me';
 const API_VERSION = '1.0.0';
 const DEFAULT_TIMEOUT = 10000;
 
@@ -12,20 +12,16 @@ function normalizePath(path) {
   return normalized;
 }
 
-async function getCookieHeader() {
-  try {
-    const cookies = await session.defaultSession.cookies.get({ url: API_BASE });
-    return cookies.map(cookie => `${cookie.name}=${cookie.value}`).join('; ');
-  } catch {
-    return '';
-  }
+async function getCookieHeader(siteSession, base) {
+  if (!siteSession) return '';
+  const cookies = await siteSession.cookies.get({ url: base });
+  return cookies.map(cookie => `${cookie.name}=${cookie.value}`).join('; ');
 }
 
 async function request(path, options = {}) {
   const endpoint = normalizePath(path);
   const method = String(options.method || 'GET').toUpperCase();
   const timeout = Number.isFinite(Number(options.timeout)) ? Number(options.timeout) : DEFAULT_TIMEOUT;
-  const cookieHeader = await getCookieHeader();
   const headers = {
     Accept: 'application/json, text/plain, */*',
     'User-Agent': 'AnimeOn-Desktop',
@@ -33,8 +29,6 @@ async function request(path, options = {}) {
     'X-AnimeOn-Client-Version': API_VERSION,
     ...(options.headers && typeof options.headers === 'object' ? options.headers : {}),
   };
-  if (cookieHeader && !headers.Cookie) headers.Cookie = cookieHeader;
-
   let body;
   if (options.body !== undefined && options.body !== null) {
     if (typeof options.body === 'string' || options.body instanceof Uint8Array) {
@@ -45,24 +39,41 @@ async function request(path, options = {}) {
     }
   }
 
+  const bases = [...new Set([API_BASE, ...API_FALLBACK_BASES])];
+  let lastResponse = null;
+  let lastError = null;
   const started = Date.now();
-  const response = await fetch(`${API_BASE}${endpoint}`, {
-    method,
-    headers,
-    body,
-    redirect: 'follow',
-    signal: AbortSignal.timeout(timeout),
-  });
-  const text = await response.text();
-  let data = text;
-  try { data = text ? JSON.parse(text) : null; } catch {}
-  return {
-    ok: response.ok,
-    status: response.status,
-    ms: Date.now() - started,
-    url: response.url,
-    data,
-  };
+  for (const base of bases) {
+    try {
+      const requestHeaders = { ...headers };
+      const cookieHeader = await getCookieHeader(options.session, base);
+      if (cookieHeader && !Object.keys(requestHeaders).some((key) => key.toLowerCase() === 'cookie')) {
+        requestHeaders.Cookie = cookieHeader;
+      }
+      const response = await fetch(`${base}${endpoint}`, {
+        method,
+        headers: requestHeaders,
+        body,
+        redirect: 'follow',
+        signal: AbortSignal.timeout(timeout),
+      });
+      const text = await response.text();
+      let data = text;
+      try { data = text ? JSON.parse(text) : null; } catch {}
+      lastResponse = {
+        ok: response.ok,
+        status: response.status,
+        ms: Date.now() - started,
+        url: response.url || `${base}${endpoint}`,
+        data,
+      };
+      if (response.status < 500) return lastResponse;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  if (lastResponse) return lastResponse;
+  throw lastError || new Error('All AnimeOn API servers are unavailable');
 }
 
 async function health() {
@@ -81,7 +92,7 @@ async function health() {
   return { ok: false, status: results.at(-1)?.status || 0, ms: results.at(-1)?.ms || 0, results };
 }
 
-async function get(path, query) {
+async function get(path, query, options = {}) {
   const params = new URLSearchParams();
   if (query && typeof query === 'object') {
     for (const [key, value] of Object.entries(query)) {
@@ -91,11 +102,11 @@ async function get(path, query) {
     }
   }
   const endpoint = normalizePath(path);
-  return request(params.toString() ? `${endpoint}?${params}` : endpoint, { method: 'GET' });
+  return request(params.toString() ? `${endpoint}?${params}` : endpoint, { ...options, method: 'GET' });
 }
 
-async function post(path, body) {
-  return request(path, { method: 'POST', body });
+async function post(path, body, options = {}) {
+  return request(path, { ...options, method: 'POST', body });
 }
 
-module.exports = { API_BASE, API_VERSION, request, get, post, health };
+module.exports = { API_BASE, API_FALLBACK_BASES, API_SESSION_PATH, API_VERSION, request, get, post, health };

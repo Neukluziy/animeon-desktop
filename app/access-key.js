@@ -3,9 +3,19 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const KEY_VERSION = 1;
+const FILE_VERSION = 2;
+const FILE_MARKER = 'AnimeOn.AccessKey.v2';
+const FILE_MARKER_VERSION = 1;
 const HASH_BYTES = 64;
 const SALT_BYTES = 16;
 const SCRYPT_OPTIONS = { N: 32768, r: 8, p: 1, maxmem: 128 * 1024 * 1024 };
+
+function assertEncryptionAvailable(safeStorage) {
+  if (!safeStorage || typeof safeStorage.isEncryptionAvailable !== 'function' ||
+      !safeStorage.isEncryptionAvailable()) {
+    throw new Error('Защита ключа недоступна. Перезапустите приложение.');
+  }
+}
 
 function normalizeAccessKey(type, value) {
   const secret = String(value || '');
@@ -70,24 +80,79 @@ async function verifyAccessKeyRecord(record, value) {
   return crypto.timingSafeEqual(candidate, decoded.hash);
 }
 
-async function verifyStoredAccessKey(filePath, value) {
-  const record = readAccessKeyFile(filePath);
+async function verifyStoredAccessKey(filePath, value, safeStorage) {
+  const record = readAccessKeyFile(filePath, safeStorage);
   return verifyAccessKeyRecord(record, value);
 }
 
-function readAccessKeyFile(filePath) {
-  const record = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+function readAccessKeyFile(filePath, safeStorage) {
+  const fileContents = fs.readFileSync(filePath, 'utf8');
+  const stored = JSON.parse(fileContents);
+  const markerPath = `${filePath}.marker`;
+  const markerExists = fs.existsSync(markerPath);
+  let markerMatchesFile = false;
+  let interruptedMigrationMarker = false;
+  if (markerExists) {
+    assertEncryptionAvailable(safeStorage);
+    try {
+      const marker = safeStorage.decryptString(fs.readFileSync(markerPath));
+      if (marker === FILE_MARKER) {
+        interruptedMigrationMarker = true;
+      } else {
+        const markerRecord = JSON.parse(marker);
+        const digest = crypto.createHash('sha256').update(fileContents, 'utf8').digest('hex');
+        if (markerRecord?.version !== FILE_MARKER_VERSION || markerRecord.digest !== digest) {
+          throw new Error('invalid marker');
+        }
+        markerMatchesFile = true;
+      }
+    } catch {
+      throw new Error('Файл защиты ключа повреждён или изменён');
+    }
+  }
+  if (markerMatchesFile && stored?.version !== FILE_VERSION) {
+    throw new Error('Обнаружена попытка подмены формата файла ключа');
+  }
+  if (interruptedMigrationMarker && stored?.version === FILE_VERSION) {
+    markerMatchesFile = false;
+  }
+  let record = stored;
+  if (stored?.version === FILE_VERSION) {
+    assertEncryptionAvailable(safeStorage);
+    if (typeof stored.payload !== 'string') throw new Error('Файл ключа доступа повреждён');
+    try {
+      record = JSON.parse(safeStorage.decryptString(Buffer.from(stored.payload, 'base64')));
+    } catch {
+      throw new Error('Файл ключа доступа повреждён или изменён');
+    }
+  }
   decodeRecord(record);
-  return record;
+  return {
+    ...record,
+    encrypted: stored?.version === FILE_VERSION,
+    marked: markerMatchesFile,
+    interruptedMigrationMarker,
+  };
 }
 
-function writeAccessKeyFile(filePath, record) {
+function writeAccessKeyFile(filePath, record, safeStorage) {
   decodeRecord(record);
+  assertEncryptionAvailable(safeStorage);
+  const { encrypted, marked, interruptedMigrationMarker, ...persistedRecord } = record;
+  const payload = safeStorage.encryptString(JSON.stringify(persistedRecord)).toString('base64');
+  const fileContents = Buffer.from(JSON.stringify({ version: FILE_VERSION, payload }), 'utf8');
+  const digest = crypto.createHash('sha256').update(fileContents).digest('hex');
+  const marker = safeStorage.encryptString(JSON.stringify({ version: FILE_MARKER_VERSION, digest }));
   const directory = path.dirname(filePath);
   fs.mkdirSync(directory, { recursive: true });
+  writeAtomically(filePath, fileContents);
+  writeAtomically(`${filePath}.marker`, marker);
+}
+
+function writeAtomically(filePath, contents) {
   const temporaryPath = `${filePath}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`;
   try {
-    fs.writeFileSync(temporaryPath, JSON.stringify(record), { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+    fs.writeFileSync(temporaryPath, contents, { mode: 0o600, flag: 'wx' });
     fs.renameSync(temporaryPath, filePath);
   } catch (error) {
     try { fs.unlinkSync(temporaryPath); } catch {}
@@ -95,11 +160,18 @@ function writeAccessKeyFile(filePath, record) {
   }
 }
 
+function removeAccessKeyMarker(filePath) {
+  const markerPath = `${filePath}.marker`;
+  if (fs.existsSync(markerPath)) fs.unlinkSync(markerPath);
+}
+
 module.exports = {
   createAccessKeyRecord,
+  assertEncryptionAvailable,
   normalizeAccessKey,
   readAccessKeyFile,
   verifyAccessKeyRecord,
   verifyStoredAccessKey,
   writeAccessKeyFile,
+  removeAccessKeyMarker,
 };

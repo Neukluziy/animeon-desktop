@@ -1,3 +1,16 @@
+function parseEpisodeLabel(value) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  const paired = text.match(/(?:^|[^a-z0-9])s\s*0*(\d{1,3})\s*[.xх-]?\s*e\s*0*(\d{1,4})(?=$|[^a-z0-9])/i)
+    || text.match(/\b0*(\d{1,3})\s*[xх]\s*0*(\d{1,4})\b/i);
+  const season = paired?.[1]
+    || text.match(/(?:сезон(?:а|ов|е)?|season)\s*[№#]?\s*(\d{1,3})|(\d{1,3})\s*(?:сезон(?:а|ов|е)?|season)/i)?.slice(1).find(Boolean)
+    || '';
+  const episode = paired?.[2]
+    || text.match(/(?:эпизод|серия|эп\.?|episode|ep\.?)\s*[№#]?\s*(\d{1,4})|(\d{1,4})\s*(?:эпизод|серия)/i)?.slice(1).find(Boolean)
+    || '';
+  return { season, episode };
+}
+
 function createMediaController({
   ipcMain,
   config,
@@ -161,9 +174,9 @@ function createMediaController({
     if (!media) return null;
 
     let page = {};
-    const siteContents = getSiteContents();
     try {
-      page = await siteContents.executeJavaScript(`(() => {
+      const pageScript = `(() => {
+        const parseEpisodeLabel = ${parseEpisodeLabel.toString()};
         const clean = value => String(value || '').replace(/\\s+/g, ' ').trim();
         const heading = clean(document.querySelector('h1')?.innerText);
         const metaTitle = clean(document.querySelector('meta[property="og:title"]')?.content);
@@ -172,21 +185,77 @@ function createMediaController({
         const pageParams = new URL(location.href).searchParams;
         const episodePattern = /(?:эпизод|серия|эп\\.?|episode|ep\\.?)\\s*[№#]?\\s*(\\d{1,4})|(\\d{1,4})\\s*(?:эпизод|серия)/i;
         const seasonPattern = /(?:сезон|season)\\s*[№#]?\\s*(\\d{1,3})|(\\d{1,3})\\s*(?:сезон(?:а|ов|е)?|season)/i;
-        const episodeNumber = value => {
+        const numberFrom = (value, pattern) => {
           const text = clean(value);
-          const match = text.match(episodePattern);
-          return match ? match[1] || match[2] : /^\\d{1,4}$/.test(text) ? text : '';
+          const match = text.match(pattern);
+          return match ? match[1] || match[2] || '' : /^\\d{1,4}$/.test(text) ? text : '';
         };
-        const episodeNodes = Array.from(document.querySelectorAll('[data-episode],[data-episode-number],[class*="episode" i],[class*="series" i],[aria-current="true"],[aria-selected="true"],.active,.selected'));
-        const episode = episodeNodes.map(element => episodeNumber(element.dataset.episode || element.dataset.episodeNumber || element.getAttribute('aria-label') || element.title || element.innerText || element.textContent)).find(Boolean)
-          || pageParams.get('episode') || pageParams.get('episode_id') || pageParams.get('episodeId') || pageParams.get('ep')
-          || clean(document.body?.innerText).match(episodePattern)?.[1]
-          || clean(document.body?.innerText).match(episodePattern)?.[2]
+        const activeSelector = '[aria-current="true"],[aria-current="page"],[aria-selected="true"],[aria-pressed="true"],[data-active="true"],[data-selected="true"],[data-state="active"],[class~="active"],[class~="selected"],[class*="is-active" i],[class*="is-selected" i]';
+        const episodeContext = '[data-episode],[data-episode-number],[class*="episode" i],[class*="series" i],[id*="episode" i],[id*="series" i]';
+        const selectedEpisodeNodes = Array.from(document.querySelectorAll(activeSelector))
+          .filter(element => element.matches(episodeContext) || element.closest(episodeContext));
+        const selectedEpisodeText = selectedEpisodeNodes.map(element => {
+          const context = element.closest(episodeContext) || element;
+          return [
+            element.dataset.episode, element.dataset.episodeNumber,
+            element.getAttribute('aria-label'), element.title, element.innerText, element.textContent,
+            context.dataset.episode, context.dataset.episodeNumber,
+            context.getAttribute('aria-label'), context.title, context.innerText, context.textContent,
+          ].filter(Boolean).join(' ');
+        }).join(' ');
+        const selectedEpisode = selectedEpisodeNodes.map(element => {
+          const context = element.closest(episodeContext) || element;
+          return numberFrom(element.dataset.episode || element.dataset.episodeNumber || element.getAttribute('aria-label') || element.title || element.innerText || element.textContent, episodePattern)
+            || numberFrom(context.dataset.episode || context.dataset.episodeNumber || context.getAttribute('aria-label') || context.title || context.innerText || context.textContent, episodePattern);
+        }).find(Boolean) || '';
+        const structured = (() => {
+          const visit = value => {
+            if (!value || typeof value !== 'object') return null;
+            if (Array.isArray(value)) {
+              for (const item of value) { const found = visit(item); if (found) return found; }
+              return null;
+            }
+            const type = Array.isArray(value['@type']) ? value['@type'].join(' ') : String(value['@type'] || '');
+            if (/VideoObject/i.test(type) || value.episodeNumber || value.partOfSeason) return value;
+            for (const item of Object.values(value)) { const found = visit(item); if (found) return found; }
+            return null;
+          };
+          for (const script of document.querySelectorAll('script[type="application/ld+json"]')) {
+            try { const found = visit(JSON.parse(script.textContent || '')); if (found) return found; } catch {}
+          }
+          return null;
+        })();
+        const breadcrumbs = Array.from(document.querySelectorAll('[aria-label*="breadcrumb" i],[class*="breadcrumb" i]')).map(element => element.innerText || element.textContent).join(' ');
+        const player = document.querySelector('video')?.closest('[class*="player" i],[id*="player" i],[class*="watch" i]');
+        const metadataText = [document.title, metaTitle, heading].filter(Boolean).join(' · ');
+        const pageMetadata = parseEpisodeLabel([metadataText, breadcrumbs, player?.innerText || player?.textContent || ''].join(' · '));
+        const selectedMetadata = parseEpisodeLabel(selectedEpisodeText);
+        const episodeParam = ['episode', 'episode_number', 'episodeNumber', 'ep'].map(key => pageParams.get(key)).find(Boolean) || '';
+        const episode = selectedEpisode
+          || numberFrom(structured?.episodeNumber, episodePattern)
+          || numberFrom(episodeParam, episodePattern)
+          || numberFrom(metadataText, episodePattern)
+          || selectedMetadata.episode
+          || pageMetadata.episode
           || '';
-        const season = clean(document.body?.innerText).match(seasonPattern)?.[1]
-          || clean(document.body?.innerText).match(seasonPattern)?.[2]
-          || pageParams.get('season')
+        const seasonParam = pageParams.get('season') || pageParams.get('season_number') || '';
+        const seasonContext = '[data-season],[data-season-number],[class*="season" i],[id*="season" i]';
+        const selectedSeason = Array.from(document.querySelectorAll(activeSelector))
+          .filter(element => element.matches(seasonContext) || element.closest(seasonContext))
+          .map(element => {
+            const context = element.closest(seasonContext) || element;
+            return numberFrom(element.dataset.season || element.dataset.seasonNumber || element.innerText || element.textContent, seasonPattern)
+              || numberFrom(context.dataset.season || context.dataset.seasonNumber || context.innerText || context.textContent, seasonPattern);
+          }).find(Boolean) || '';
+        const season = selectedSeason
+          || numberFrom(selectedEpisodeNodes.map(element => element.closest(episodeContext) || element).map(element => element.innerText || element.textContent).join(' '), seasonPattern)
+          || numberFrom(structured?.partOfSeason?.seasonNumber || structured?.partOfSeason?.name, seasonPattern)
+          || numberFrom(seasonParam, seasonPattern)
+          || numberFrom(metadataText + ' ' + breadcrumbs, seasonPattern)
+          || selectedMetadata.season
+          || pageMetadata.season
           || '';
+        const episodeTitle = clean(structured?.name || '');
         const voicePattern = /ТО Дубляжная|AniLibria(?:_TV)?|Crunchyroll_Subtitles|AniDUB|AnimeVost|Dream\\s*Cast|AniMaunt|FumoDub|JAM/i;
         const selectedSelector = '[aria-selected="true"],[aria-current="true"],[aria-pressed="true"],option:checked,input:checked,[class~="active"],[class~="selected"]';
         const selected = Array.from(document.querySelectorAll(selectedSelector));
@@ -220,8 +289,26 @@ function createMediaController({
         const watchUrl = safeSiteUrl(location.href);
         const animeUrl = animeUrlFor(location.href) || animeUrlFor(document.querySelector('link[rel="canonical"]')?.href)
           || animeUrlFor(document.querySelector('meta[property="og:url"]')?.content) || animeUrlFor(link?.href) || watchUrl;
-        return { animeTitle, episode, season, dubbing, animeUrl, watchUrl };
-      })()`);
+        return { hasVideo: !!document.querySelector('video'), animeTitle, episode, season, episodeTitle, dubbing, animeUrl, watchUrl };
+      })()`;
+      const pages = await Promise.all(getGuestFrames().map(async (frame) => {
+        try { return await frame.executeJavaScript(pageScript, false); } catch { return null; }
+      }));
+      const videoPage = pages.find((candidate) => candidate?.hasVideo) || {};
+      const titlePage = pages.find((candidate) => candidate?.animeTitle && candidate.animeTitle !== 'AnimeOn') || {};
+      const metadataPage = pages.find((candidate) => candidate?.episode || candidate?.season || candidate?.episodeTitle) || {};
+      page = {
+        ...videoPage,
+        animeTitle: metadataPage.animeTitle && metadataPage.animeTitle !== 'AnimeOn'
+          ? metadataPage.animeTitle
+          : titlePage.animeTitle || videoPage.animeTitle || 'AnimeOn',
+        episode: metadataPage.episode || videoPage.episode || titlePage.episode || '',
+        season: metadataPage.season || videoPage.season || titlePage.season || '',
+        episodeTitle: metadataPage.episodeTitle || videoPage.episodeTitle || titlePage.episodeTitle || '',
+        dubbing: metadataPage.dubbing || videoPage.dubbing || titlePage.dubbing || '',
+        animeUrl: titlePage.animeUrl || metadataPage.animeUrl || videoPage.animeUrl || '',
+        watchUrl: titlePage.watchUrl || metadataPage.watchUrl || videoPage.watchUrl || '',
+      };
     } catch {}
 
     const frameDubbing = await getSelectedDubbingFromFrames().catch(() => '');
@@ -427,4 +514,4 @@ function createMediaController({
   };
 }
 
-module.exports = { createMediaController };
+module.exports = { createMediaController, parseEpisodeLabel };
