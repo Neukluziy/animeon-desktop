@@ -415,6 +415,14 @@ html.animeon-route-pulse body{animation:animeon-shell-route .28s cubic-bezier(.2
 
 
 .ghost-btn.accent, .ghost-btn.accent:hover, .ghost-btn.accent:focus-visible { color:#fff !important; }
+.ghost-btn.accent{border-color:rgb(var(--am-rgb));background-clip:border-box}
+.ghost-btn.accent,
+.ghost-btn.accent:hover,
+.ghost-btn.accent:focus-visible,
+.ghost-btn.accent:active,
+.ghost-btn.accent:disabled{border-right:0!important}
+.ghost-btn.success{border-color:#059669;background-clip:border-box}
+#watch-note-save{height:36px!important;padding:0 10px!important;font-size:10px!important;line-height:1!important}
 
 
 
@@ -651,6 +659,13 @@ select:focus-visible,
 #page-toolbar .dnd-icon{display:grid;place-items:center;width:18px;height:18px}
 #page-toolbar .dnd-icon svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;transform:translateY(2px)}
 .win-btns .dnd-icon svg{transform:translateY(2px)}
+#titlebar .win-btns>#btn-dnd .dnd-icon svg{transform:translate(-1px,2px)}
+#titlebar .win-btns>#btn-hotkeys-main svg,
+#titlebar .win-btns>#btn-settings svg{transform:translateX(-1px)}
+#titlebar .win-btns>button{border-right-color:rgba(var(--a-rgb),.2)}
+#titlebar .win-btns>#btn-dnd.active,
+#titlebar .win-btns>#btn-hotkeys-main.open,
+#titlebar .win-btns>#btn-settings.open{border-right-color:rgba(var(--a-rgb),.45)}
 
 
 /* Independent WebView visibility for tabs */
