@@ -214,7 +214,7 @@ window.addEventListener('keydown', async e => {
     recordingHotkey = null;
     recordingCaptured = [];
     renderHotkeys();
-    toast('Хоткей отключён');
+    toast('Хоткей отключён', 'error');
     return;
   }
   const combo = normalizeRecordedCombo(e);

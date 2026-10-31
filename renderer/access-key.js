@@ -39,7 +39,7 @@ export function initAccessKeyFeature({ native, cfg, toast, askConfirmation, isFi
     releaseAccessKeyGate();
     if (accessKeyInfo.recoveredMissingKey) {
       accessKeyInfo.recoveredMissingKey = false;
-      toast('Файл ключа удалён — cookies аккаунтов очищены', 'warning');
+      toast('Файл ключа удалён — данные аккаунтов очищены', 'warning');
     }
   }
   function showAccessKeyPanel(panel, flow = 'prompt') {
@@ -260,7 +260,7 @@ accessKeySettingsRemove?.addEventListener('click', async () => {
 accessKeyPromptToggle?.addEventListener('change', async () => {
   try {
     await persistPromptPreference(!accessKeyPromptToggle.checked);
-    toast(accessKeyPromptToggle.checked ? 'Предложение будет показываться при запуске' : 'Предложение отключено');
+    toast(accessKeyPromptToggle.checked ? 'Предложение будет показываться при запуске' : 'Предложение отключено', accessKeyPromptToggle.checked ? 'ok' : 'error');
   } catch (error) {
     accessKeyPromptToggle.checked = !accessKeyPromptToggle.checked;
     toast(String(error?.message || error), 'error');
@@ -383,7 +383,7 @@ native.onAccessKeyRemoved?.(() => {
   refreshAccessKeySettings();
   reloadWebviews();
   closeAccessKeyPanel();
-  toast('Файл ключа удалён — cookies аккаунтов очищены', 'warning');
+  toast('Файл ключа удалён — данные аккаунтов очищены', 'warning');
   if (!accessKeyGateReleased) {
     if (!accessKeyInfo.promptDismissed) showAccessKeyPrompt('startup');
     else releaseSecurityGate();
@@ -404,7 +404,7 @@ native.onAccessKeyRemoved?.(() => {
       cfg.accessKeyEnabled = accessKeyInfo.enabled;
       cfg.accessKeyPromptDismissed = accessKeyInfo.promptDismissed;
       accessKeyStartupError = result.error
-        ? `${result.error}. Если файл повреждён, удалите access-key.json в папке данных; cookies аккаунтов будут очищены.`
+        ? `${result.error}. Удаление access-key.json восстановит доступ, но очистит данные аккаунтов.`
         : '';
       await refreshAccessKeySettings();
       if (accessKeyInfo.enabled) {
