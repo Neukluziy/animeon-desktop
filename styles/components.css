@@ -86,7 +86,7 @@ body.mirror-switching::after { display:none !important; }
 
 
 
-.pk-cards .site-card { transform-style: preserve-3d; perspective: 900px; will-change: transform; }
+.pk-cards .site-card { transform-style: preserve-3d; perspective: 900px; will-change: transform; overflow:hidden; background-clip:border-box; }
 
 
 .pk-cards .site-card:hover { box-shadow: inset 0 0 0 1px rgba(var(--a-rgb),.55), 0 18px 38px rgba(var(--a-rgb),.20); }
@@ -887,4 +887,3 @@ body.picker-visible #titlebar {
 
 
 .settings-group-card + .settings-group-card { margin-top: 10px; }
-
