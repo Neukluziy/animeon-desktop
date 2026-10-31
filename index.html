@@ -188,6 +188,16 @@
     <div class="page-actions" aria-label="Страницы">
       <button id="btn-tabs-sidebar-toggle" class="tabs-sidebar-toggle" type="button" aria-controls="tabs-bar" aria-expanded="false" title="Открыть список вкладок" aria-label="Открыть список вкладок">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg>
+        <span class="tabs-sidebar-toggle-label">Вкладки</span>
+        <span id="tabs-toggle-count" class="tabs-toggle-count" aria-hidden="true">0</span>
+      </button>
+      <button id="btn-accounts" class="page-action account-action" type="button" title="Переключить аккаунт">
+        <span class="page-action-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c.7-3.5 3.1-5.3 7-5.3s6.3 1.8 7 5.3"/></svg></span>
+        <span id="active-account-label">Аккаунт</span>
+      </button>
+      <button id="btn-new-window" class="page-action" type="button" title="Открыть новое окно с отдельными вкладками">
+        <span class="page-action-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="14" height="14" rx="2"/><path d="M8 3h11a2 2 0 0 1 2 2v11M10 12h6M13 9v6"/></svg></span>
+        <span>Новое окно</span>
       </button>
       <button id="btn-pages" class="page-action" title="Открыть список страниц">
         <span class="page-action-icon">☰</span><span>Страницы</span>
@@ -324,7 +334,7 @@
           <div class="settings-search-wrap"><input id="settings-search" type="text" placeholder="Поиск по настройкам..." class="pages-search-input"><span class="settings-search-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="10.8" cy="10.8" r="6.3"/><path d="m15.5 15.5 4.2 4.2"/></svg></span></div>
           <div class="st-side-cap">Категории</div>
           <div class="settings-nav-list" id="settings-nav-list">
-            <button class="settings-nav-item active" data-settings-filter="all">Все</button><button class="settings-nav-item" data-settings-filter="main">Основные</button><button class="settings-nav-item" data-settings-filter="view">Внешний вид</button><button class="settings-nav-item" data-settings-filter="player">Инструменты</button><button class="settings-nav-item" data-settings-filter="notifications">Уведомления</button><button class="settings-nav-item" data-settings-filter="performance">Производительность</button><button class="settings-nav-item" data-settings-filter="cache">Кэш</button><button class="settings-nav-item" data-settings-filter="network">Сеть</button><button class="settings-nav-item" data-settings-filter="screenshots">Скриншоты</button><button class="settings-nav-item" data-settings-filter="updates">Обновления</button><button class="settings-nav-item" data-settings-filter="accessKey">Ключ доступа</button><button class="settings-nav-item" data-settings-filter="advanced">Дополнительно</button>
+            <button class="settings-nav-item active" data-settings-filter="all">Все</button><button class="settings-nav-item" data-settings-filter="main">Основные</button><button class="settings-nav-item" data-settings-filter="accounts">Аккаунты</button><button class="settings-nav-item" data-settings-filter="view">Внешний вид</button><button class="settings-nav-item" data-settings-filter="player">Инструменты</button><button class="settings-nav-item" data-settings-filter="notifications">Уведомления</button><button class="settings-nav-item" data-settings-filter="performance">Производительность</button><button class="settings-nav-item" data-settings-filter="cache">Кэш</button><button class="settings-nav-item" data-settings-filter="network">Сеть</button><button class="settings-nav-item" data-settings-filter="screenshots">Скриншоты</button><button class="settings-nav-item" data-settings-filter="updates">Обновления</button><button class="settings-nav-item" data-settings-filter="accessKey">Ключ доступа</button><button class="settings-nav-item" data-settings-filter="advanced">Дополнительно</button>
           </div>
         </aside>
         <div class="st-content" id="st-content">
@@ -610,7 +620,7 @@
           </div>
         </section>
 
-        <section class="st-section settings-group-card" data-settings-group="player">
+        <section id="remote-access-section" class="st-section settings-group-card" data-settings-group="player">
           <div class="settings-subgroup">
             <div class="settings-subtitle">Удалённый доступ с телефона</div>
             <p class="st-hint">Управление AnimeOn с телефона пока недоступно.</p>
@@ -638,6 +648,13 @@
         </section>
         <section class="st-section settings-group-card" data-settings-group="advanced"><div class="st-title">Журнал ошибок</div><p class="st-hint">Журнал помогает разобраться, если приложение работает неправильно.</p><div class="settings-action-grid"><button id="btn-open-log" class="ghost-btn">Открыть журнал</button><button id="btn-copy-log" class="ghost-btn">Скопировать журнал</button><button id="btn-clear-log" class="ghost-btn danger-outline">Очистить журнал</button></div></section>
         <section class="st-section settings-group-card" data-settings-group="updates"><div class="st-title">О программе</div><div class="about-card"><div class="about-head"><img src="assets/logo.png" alt="" class="about-logo"><div class="about-info"><b>AnimeOn Desktop</b><span id="about-version-value"></span><i>Неофициальный десктоп-клиент для AnimeOn</i></div></div><p class="about-text" style="margin:8px 0 0">Неофициальное приложение, не связанное с командой AnimeOn.</p></div><div class="settings-action-grid" style="margin-top:8px"><button id="btn-about-check-update" class="ghost-btn accent">Проверить обновления</button><button id="btn-about-source" class="ghost-btn">Исходный код</button></div></section>
+        <section class="st-section settings-group-card" data-settings-group="accounts">
+          <div class="st-title">Аккаунты</div>
+          <div class="switch-row">
+            <div class="sw-text"><b>Профили AnimeOn</b><i>Переключайся между сохранёнными сессиями без выхода из аккаунта</i></div>
+            <button id="btn-accounts-settings" class="ghost-btn accent accounts-settings-button" type="button">Управление аккаунтами</button>
+          </div>
+        </section>
 
         </div>
       </div>
@@ -741,6 +758,23 @@
     </div>
   </div>
 
+  <div id="accounts-modal" class="hotkeys-modal" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="accounts-title">
+    <div class="hotkeys-card pages-card pages-card-single accounts-card">
+      <header class="st-head">
+        <div class="st-titles"><b id="accounts-title">Аккаунты</b><i>Переключайся без выхода из профиля</i></div>
+        <button id="btn-close-accounts" title="Закрыть">×</button>
+      </header>
+      <div class="pages-single-body">
+        <p class="st-hint">У каждого аккаунта своя сохранённая сессия. Пароли вводятся только на сайте AnimeOn.</p>
+        <div id="accounts-list" class="accounts-list"></div>
+        <div class="accounts-add-row">
+          <input id="account-name-input" maxlength="40" autocomplete="off" aria-label="Название нового аккаунта" placeholder="Например, Личный">
+          <button id="btn-account-add" class="ghost-btn accent" type="button">Добавить аккаунт</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div id="command-palette">
     <div class="command-card">
       <div class="command-top"><span>Быстрые команды</span><kbd>Ctrl K</kbd></div>
@@ -755,7 +789,6 @@
   <div id="progress"></div>
 
   <div id="view-area">
-    <webview id="wv" class="tab-active" allowpopups partition="persist:animeon" webpreferences="webSecurity=yes,contextIsolation=yes,sandbox=yes,allowRunningInsecureContent=no"></webview>
   </div>
 
   <script type="module" src="renderer/app.js"></script>
