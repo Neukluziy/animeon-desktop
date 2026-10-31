@@ -25,7 +25,7 @@ contextBridge.exposeInMainWorld('native', {
   updOpen: () => ipcRenderer.send('upd:open'),
   updClose: () => ipcRenderer.send('upd:close'),
   updDownload: () => ipcRenderer.invoke('upd:download'),
-  updInstall: () => ipcRenderer.send('upd:install'),
+  updInstall: () => ipcRenderer.invoke('upd:install'),
   onUpdData: (cb) => ipcRenderer.on('upd:data', (_, v) => cb(v)),
   onUpdProgress: (cb) => ipcRenderer.on('upd:progress', (_, v) => cb(v)),
   minimizeWindow: () => ipcRenderer.send('win:minimize'),

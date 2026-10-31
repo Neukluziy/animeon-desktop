@@ -105,8 +105,10 @@ function openUpdateWindow() {
     minWidth: 440,
     minHeight: 560,
     frame: false,
+    transparent: true,
     show: false,
-    backgroundColor: '#0f0d14',
+    backgroundColor: '#00000000',
+    hasShadow: false,
     icon: path.join(__dirname, '../assets', 'logo.ico'),
     title: 'Обновление AnimeOn',
     webPreferences: {
@@ -288,7 +290,10 @@ ipcMain.on('upd:close', (event) => {
   if (!isTrustedAppEvent(event)) return;
   if (updateWindow && !updateWindow.isDestroyed()) updateWindow.close();
 });
-ipcMain.on('upd:install', (event) => { if (isTrustedAppEvent(event)) applyUpdate(); });
+ipcMain.handle('upd:install', (event) => {
+  if (!isTrustedAppEvent(event)) return { ok: false, error: 'untrusted sender' };
+  return applyUpdate() ? { ok: true } : { ok: false, error: 'Не удалось запустить установщик' };
+});
 ipcMain.handle('upd:download', (event) => isTrustedAppEvent(event) ? downloadUpdate() : { ok: false, error: 'untrusted sender' });
 ipcMain.handle('upd:rollback', (event) => isTrustedAppEvent(event) ? rollbackUpdate() : { ok: false, error: 'untrusted sender' });
 
