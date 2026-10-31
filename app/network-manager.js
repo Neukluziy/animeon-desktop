@@ -3,6 +3,7 @@ function createNetworkManager({
   session,
   ipcMain,
   config,
+  accountPartition,
   parseProxyEndpoint,
   saveConfig,
   writeLog,
@@ -12,17 +13,21 @@ function createNetworkManager({
   let lastMirrorHealthCheck = 0;
   let mirrorHealthTimer = null;
 
-  async function applyNetworkSettings() {
+  async function applyNetworkSettings(targetSessions) {
     const proxy = config.network || { mode: 'system', host: '', port: 0, user: '', pass: '', doh: false };
-    const sessions = [session.defaultSession];
-    try { sessions.push(session.fromPartition('persist:animeon')); } catch {}
+    const sessions = new Set(targetSessions || [session.defaultSession]);
+    if (!targetSessions) {
+      for (const account of config.accounts || []) {
+        try { sessions.add(session.fromPartition(accountPartition(account.id))); } catch {}
+      }
+    }
     const endpoint = proxy.mode === 'custom' ? parseProxyEndpoint(`${proxy.host || ''}:${proxy.port || ''}`) : null;
     const proxyConfig = proxy.mode === 'direct'
       ? { mode: 'direct' }
       : proxy.mode === 'custom' && endpoint
         ? { mode: 'fixed_servers', proxyRules: `${proxy.user ? `${encodeURIComponent(proxy.user)}:${encodeURIComponent(proxy.pass || '')}@` : ''}${endpoint.host}:${endpoint.port}` }
         : { mode: 'system' };
-    await Promise.all(sessions.map(async (siteSession) => {
+    await Promise.all([...sessions].map(async (siteSession) => {
       await siteSession.setProxy(proxyConfig);
       await siteSession.closeAllConnections();
     }));
@@ -150,7 +155,7 @@ function createNetworkManager({
     ipcMain.handle('net:check-proxy', async () => {
       try {
         const { net: electronNet } = require('electron');
-        const siteSession = session.fromPartition('persist:animeon');
+        const siteSession = session.fromPartition(accountPartition(config.activeAccountId));
         const target = (config.siteList && config.siteList[0] && config.siteList[0].url) || 'https://animeon.cc/';
         if (config.network?.mode === 'custom') {
           const endpoint = parseProxyEndpoint(`${config.network.host || ''}:${config.network.port || ''}`);

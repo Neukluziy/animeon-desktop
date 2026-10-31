@@ -10,6 +10,9 @@ function createSettingsIpc({
   session,
   getWindow,
   getSiteContents,
+  getWindowContext,
+  getWindowSiteContents,
+  getAllSiteContents,
   saveConfig,
   applySideEffects,
   applyDiscordRpcRuntime,
@@ -25,6 +28,12 @@ function createSettingsIpc({
   discordDefaults,
 }) {
   const exportKeys = ['theme','custom','site','siteList','remember','notify','autostart','tray','compact','confirmClose','autoRecovery','performance','lowPower','autoHide','closeBehavior','alwaysOnTop','hotkeys','customCss','smoothSite','showSiteScrollbars','visual','profiles','lastUrl','history','favorites','api','playbackPositions','playbackSpeed','library','resumeEnabled','autoNext','recentPages','pageFavorites','tabs','activeTab','tabsFixedV2','doNotDisturb','sleepTimer','autoCacheCleanup','cacheLimitMB','errorLog','memorySaver','startupPolicyFixed','discordRpc'];
+  const activeSiteSession = (event) => {
+    const siteContents = getWindowSiteContents?.(event) || getSiteContents();
+    return siteContents && !siteContents.isDestroyed()
+      ? siteContents.session
+      : session.fromPartition(config.accounts?.find((account) => account.id === getWindowContext?.(event)?.accountId)?.partition || 'persist:animeon');
+  };
 
   function registerIpc() {
     ipcMain.handle('library:get', () => ({ library: config.library }));
@@ -69,9 +78,9 @@ function createSettingsIpc({
       };
     });
 
-    ipcMain.handle('app:clear-site-data', async () => {
+    ipcMain.handle('app:clear-site-data', async (event) => {
       try {
-        await session.defaultSession.clearStorageData({
+        await activeSiteSession(event).clearStorageData({
           storages: ['appcache', 'cookies', 'filesystem', 'indexdb', 'localstorage', 'serviceworkers', 'websql', 'shadercache', 'cachestorage'],
         });
         return { ok: true };
@@ -149,15 +158,25 @@ function createSettingsIpc({
       return { ok: true, favorite: index < 0, items: config.pageFavorites };
     });
 
-    ipcMain.handle('tabs:get', () => ({ ok: true, tabs: config.tabs || [], activeTab: config.activeTab || 0 }));
-    ipcMain.handle('tabs:set', (_, tabs, active = 0) => {
-      config.tabs = Array.isArray(tabs) ? tabs.slice(0, 12) : [];
-      config.activeTab = Math.max(0, Math.min(Math.max(0, config.tabs.length - 1), Number(active) || 0));
-      saveConfig();
-      return { ok: true, tabs: config.tabs, activeTab: config.activeTab };
+    ipcMain.handle('tabs:get', (event) => {
+      const state = getWindowContext?.(event);
+      if (!state) return { ok: false, error: 'untrusted sender' };
+      return { ok: true, tabs: state.tabs || [], activeTab: state.activeTab || 0 };
     });
-    ipcMain.handle('find:start', (_, text) => {
-      const siteWc = getSiteContents();
+    ipcMain.handle('tabs:set', (event, tabs, active = 0) => {
+      const state = getWindowContext?.(event);
+      if (!state) return { ok: false, error: 'untrusted sender' };
+      state.tabs = Array.isArray(tabs) ? tabs.slice(0, 12) : [];
+      state.activeTab = Math.max(0, Math.min(Math.max(0, state.tabs.length - 1), Number(active) || 0));
+      if (state === config.windowStates?.main) {
+        config.tabs = state.tabs;
+        config.activeTab = state.activeTab;
+      }
+      saveConfig();
+      return { ok: true, tabs: state.tabs, activeTab: state.activeTab };
+    });
+    ipcMain.handle('find:start', (event, text) => {
+      const siteWc = getWindowSiteContents?.(event) || getSiteContents();
       if (!siteWc || siteWc.isDestroyed()) return { ok: false };
       const value = String(text || '');
       if (!value) {
@@ -166,8 +185,8 @@ function createSettingsIpc({
       }
       return { ok: true, id: siteWc.findInPage(value, { findNext: false, matchCase: false }) };
     });
-    ipcMain.handle('find:stop', () => {
-      try { getSiteContents()?.stopFindInPage('clearSelection'); } catch {}
+    ipcMain.handle('find:stop', (event) => {
+      try { (getWindowSiteContents?.(event) || getSiteContents())?.stopFindInPage('clearSelection'); } catch {}
       return { ok: true };
     });
     ipcMain.handle('sleep:set', (_, minutes, action) => setSleepTimer(minutes, action));
@@ -209,14 +228,17 @@ function createSettingsIpc({
       }
       return { ok: true, auto: config.autoCacheCleanup, limitMB: config.cacheLimitMB };
     });
-    ipcMain.handle('cache:info', async () => {
-      try { return { ok: true, size: await session.defaultSession.getCacheSize(), limitMB: Number(config.cacheLimitMB) || 512, auto: !!config.autoCacheCleanup }; }
+    ipcMain.handle('cache:info', async (event) => {
+      try { return { ok: true, size: await activeSiteSession(event).getCacheSize(), limitMB: Number(config.cacheLimitMB) || 512, auto: !!config.autoCacheCleanup }; }
       catch (error) { return { ok: false, error: String(error?.message || error) }; }
     });
-    ipcMain.handle('memory:saver', (_, enabled) => {
+    ipcMain.handle('memory:saver', (event, enabled) => {
       config.memorySaver = !!enabled;
       saveConfig();
-      try { getSiteContents()?.setBackgroundThrottling(config.memorySaver || config.performance === 'economy'); } catch {}
+      const contentsList = getAllSiteContents?.(event) || [getWindowSiteContents?.(event) || getSiteContents()];
+      for (const siteContents of contentsList) {
+        try { siteContents?.setBackgroundThrottling(config.memorySaver || config.performance === 'economy'); } catch {}
+      }
       return { ok: true, enabled: config.memorySaver };
     });
 
@@ -228,9 +250,9 @@ function createSettingsIpc({
       try { for (const file of fs.readdirSync(apiCacheDir)) { try { bytes += fs.statSync(path.join(apiCacheDir, file)).size; } catch {} } } catch {}
       return bytes;
     };
-    ipcMain.handle('system:cache-info', async () => {
+    ipcMain.handle('system:cache-info', async (event) => {
       let sessionCache = 0;
-      try { sessionCache = await session.defaultSession.getCacheSize(); } catch {}
+      try { sessionCache = await activeSiteSession(event).getCacheSize(); } catch {}
       return { ok: true, apiCacheMB: Math.round(getApiCacheSize() / 1048576 * 10) / 10, sessionCacheMB: Math.round(sessionCache / 1048576 * 10) / 10, screenshots: fs.existsSync(screenshotsDir) ? fs.readdirSync(screenshotsDir).filter((file) => /\.png$/i.test(file)).length : 0 };
     });
     ipcMain.handle('system:clear-api-cache', async () => {

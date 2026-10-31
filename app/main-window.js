@@ -10,6 +10,8 @@ function createMainWindowFactory({
   handleLocalHotkey,
   isQuitting,
   setWindow,
+  isWindowCloseApproved,
+  onWindowClosed,
   ensureTray,
   saveWindowState,
   setupJumpList,
@@ -27,10 +29,12 @@ function createMainWindowFactory({
   shell,
   openTelegramExternal,
 }) {
-  let win = null;
-function createWindow() {
+const configuredHostSessions = new WeakSet();
+const configuredSiteSessions = new WeakSet();
+function createWindow(options = {}) {
+  const windowId = String(options.windowId || 'main');
   try{ app.setAppUserModelId('co.animeon.desktop'); }catch{}
-  const ws = loadWindowState();
+  const ws = loadWindowState(windowId);
   let winIcon;
   try{
     const icoPath=path.join(appDir, '../assets', 'logo.ico');
@@ -38,7 +42,7 @@ function createWindow() {
     if(fs.existsSync(icoPath)) winIcon=nativeImage.createFromPath(icoPath);
     else if(fs.existsSync(pngPath)) winIcon=nativeImage.createFromPath(pngPath);
   }catch{}
-  win = new BrowserWindow({
+  const win = new BrowserWindow({
     width: ws.width,
     height: ws.height,
     x: Number.isFinite(ws.x) ? ws.x : undefined,
@@ -61,7 +65,7 @@ function createWindow() {
       spellcheck: false,
     },
   });
-  setWindow(win);
+  setWindow(win, windowId);
 
   win.once('ready-to-show', () => { try{ if(winIcon && !winIcon.isEmpty()) win.setIcon(winIcon); }catch{} win.show(); });
   win.setMenuBarVisibility(false);
@@ -109,7 +113,7 @@ function createWindow() {
   let boundsSaveTimer = null;
   const saveBounds = () => {
     clearTimeout(boundsSaveTimer);
-    boundsSaveTimer = setTimeout(() => saveWindowState(), 180);
+    boundsSaveTimer = setTimeout(() => saveWindowState(windowId, win), 180);
   };
   win.on('resize', saveBounds);
   win.on('move', saveBounds);
@@ -125,6 +129,10 @@ function createWindow() {
   win.on('leave-full-screen', () => win.webContents.send('fs-state', false));
 
   win.on('close', (e) => {
+    if (isWindowCloseApproved(windowId)) {
+      saveWindowState(windowId, win);
+      return;
+    }
     if (!isQuitting() && config.tray) {
       e.preventDefault();
       ensureTray();
@@ -142,34 +150,39 @@ function createWindow() {
       win.hide();
       return;
     }
-    saveWindowState();
+    saveWindowState(windowId, win);
   });
+  win.on('closed', () => onWindowClosed(windowId, win));
 
   setupJumpList();
-  applyNetworkSettings().catch((error) => console.error('[AnimeOn] Failed to apply network settings:', error));
+  if (options.initializeNetwork) {
+    applyNetworkSettings().catch((error) => console.error('[AnimeOn] Failed to apply network settings:', error));
+  }
 
   const siteSession = win.webContents.session;
-  siteSession.webRequest.onHeadersReceived((details, callback) => {
-    const headers = { ...(details.responseHeaders || {}) };
-    try {
-      const requestUrl = new URL(details.url);
-      const origin = String(details.requestHeaders?.Origin || details.requestHeaders?.origin || '');
-      if (origin && /(^|\.)animeon\.(cc|co)$/i.test(new URL(origin).hostname) && /(^|\.)animeon\.cloud$/i.test(requestUrl.hostname)) {
-        const key = Object.keys(headers).find(k => k.toLowerCase() === 'access-control-allow-origin');
-        if (key) delete headers[key];
-        headers['Access-Control-Allow-Origin'] = [origin];
-        const credKey = Object.keys(headers).find(k => k.toLowerCase() === 'access-control-allow-credentials');
-        if (credKey) delete headers[credKey];
-        headers['Access-Control-Allow-Credentials'] = ['true'];
-      }
-    } catch {}
-    callback({ responseHeaders: headers });
-  });
+  if (!configuredHostSessions.has(siteSession)) {
+    configuredHostSessions.add(siteSession);
+    siteSession.webRequest.onHeadersReceived((details, callback) => {
+      const headers = { ...(details.responseHeaders || {}) };
+      try {
+        const requestUrl = new URL(details.url);
+        const origin = String(details.requestHeaders?.Origin || details.requestHeaders?.origin || '');
+        if (origin && /(^|\.)animeon\.(cc|co)$/i.test(new URL(origin).hostname) && /(^|\.)animeon\.cloud$/i.test(requestUrl.hostname)) {
+          const key = Object.keys(headers).find(k => k.toLowerCase() === 'access-control-allow-origin');
+          if (key) delete headers[key];
+          headers['Access-Control-Allow-Origin'] = [origin];
+          const credKey = Object.keys(headers).find(k => k.toLowerCase() === 'access-control-allow-credentials');
+          if (credKey) delete headers[credKey];
+          headers['Access-Control-Allow-Credentials'] = ['true'];
+        }
+      } catch {}
+      callback({ responseHeaders: headers });
+    });
+  }
 
-  const configuredSiteSessions = new WeakSet();
   win.webContents.on('did-attach-webview', (_, wc) => {
-    setSiteContents(wc);
-    try { wc.setBackgroundThrottling(config.performance === 'economy'); } catch {}
+    setSiteContents(wc, win.webContents);
+    try { wc.setBackgroundThrottling(!!config.memorySaver || config.performance === 'economy'); } catch {}
     try { wc.setVisualZoomLevelLimits(1, 1).catch(() => {}); } catch {}
     try {
       const session = wc.session;

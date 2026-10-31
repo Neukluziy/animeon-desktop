@@ -57,37 +57,16 @@ function formatPlaybackTime(value) {
   return hours ? `${hours}:${pad(minutes)}:${pad(remainder)}` : `${minutes}:${pad(remainder)}`;
 }
 
-function buildDiscordActivity(media = {}, options = {}) {
-  const settings = { ...DEFAULT_DISCORD_RPC_SETTINGS, ...(options || {}) };
+function buildDiscordActivity(media = {}) {
   const idle = !!media.idle;
   const title = String(idle ? 'AnimeOn' : media.animeTitle || media.title || 'AnimeOn').replace(/\s+/g, ' ').trim().slice(0, 128) || 'AnimeOn';
-  const episode = String(media.episode || '—').slice(0, 12);
-  const season = String(media.season || '—').slice(0, 12);
   const duration = Number(media.duration) > 0
     ? `${formatPlaybackTime(media.currentTime)} / ${formatPlaybackTime(media.duration)}`
-    : formatPlaybackTime(media.currentTime);
-  const state = [];
-  if (idle) {
-    state.push(String(media.idleText || 'В главном меню').slice(0, 128));
-  } else {
-    const parts = [];
-    if (settings.showEpisode) parts.push(`Серия ${episode}`);
-    if (settings.showSeason) parts.push(`Сезон ${season}`);
-    if (settings.showTime) parts.push(duration);
-    state.push(parts.join(' · ') || 'Смотрит');
-  }
-
+    : Number(media.currentTime) > 0 ? formatPlaybackTime(media.currentTime) : '';
   return {
     details: title,
-    state: state.join('\n').slice(0, 128),
-    detailsUrl: settings.clickTitle ? media.animeUrl : '',
-    stateUrl: settings.clickState ? media.watchUrl : '',
-    largeImageKey: settings.showPoster && settings.useAnimePoster && media.posterUrl ? media.posterUrl : 'logo',
-    largeImageText: title,
-    largeImageUrl: settings.clickPoster ? media.animeUrl : '',
-    smallImageKey: idle ? '' : media.paused ? 'pause' : 'play',
-    smallImageText: idle ? '' : media.paused ? 'Пауза' : 'Смотрит',
-    buttons: [],
+    state: idle ? '' : duration,
+    largeImageKey: 'logo',
   };
 }
 
