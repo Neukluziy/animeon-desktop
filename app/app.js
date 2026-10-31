@@ -1572,16 +1572,7 @@ app.whenReady().then(async () => {
   process.on('uncaughtException', (e) => writeLog('error', 'uncaughtException', { error: String(e?.stack || e) }));
   process.on('unhandledRejection', (e) => writeLog('error', 'unhandledRejection', { error: String(e?.stack || e) }));
 
-  setTimeout(() => {
-    if (config.autoUpdate) {
-      checkUpdate(false).then((result) => {
-        if (!result?.ok) writeLog('warn', 'Automatic update check failed', { reason: result?.reason || 'unknown error' });
-      }).catch((error) => {
-        writeLog('warn', 'Automatic update check failed', { error: String(error?.message || error) });
-      });
-    }
-    networkManager.startMirrorHealthCheck();
-  }, 1200);
+  setTimeout(() => { checkUpdate().catch(() => {}); networkManager.startMirrorHealthCheck(); }, 1200);
 
   if (process.argv.includes('--settings')) setTimeout(() => win?.webContents.send('open-settings'), 900);
   if (process.argv.includes('--reload')) setTimeout(() => win?.webContents.send('restart-webview'), 1200);
