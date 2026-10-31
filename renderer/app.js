@@ -6,7 +6,11 @@ import { initAccessKeyFeature } from './access-key.js';
 import { initPageLibrary } from './pages.js';
 import { initThemeController } from './theme.js';
 import { initSiteAppearance } from './site-appearance.js';
+import { initAccounts } from './accounts.js';
 
+const cfg = window.native.getConfig() || {};
+const activeAccount = () => cfg.accounts?.find((item) => item.id === cfg.activeAccountId);
+const accountPartition = () => activeAccount()?.partition || 'persist:animeon';
 
 const __splashFallback = (() => {
   const root = document.getElementById('splash');
@@ -44,7 +48,13 @@ const __splashFallback = (() => {
   };
 })();
 const webviewHost = document.getElementById('view-area');
-const firstWebview = document.getElementById('wv');
+const firstWebview = document.createElement('webview');
+firstWebview.id = 'wv';
+firstWebview.className = 'tab-active';
+firstWebview.setAttribute('allowpopups', '');
+firstWebview.setAttribute('partition', accountPartition());
+firstWebview.setAttribute('webpreferences', 'webSecurity=yes,contextIsolation=yes,sandbox=yes,allowRunningInsecureContent=no');
+webviewHost?.appendChild(firstWebview);
 let activeWebview = firstWebview;
 const webviewListeners = [];
 const webviewListenerMap = new WeakMap();
@@ -106,7 +116,7 @@ function createTabWebview(index) {
   const webview = document.createElement('webview');
   webview.id = `wv-tab-${index}`;
   webview.setAttribute('allowpopups', '');
-  webview.setAttribute('partition', 'persist:animeon');
+  webview.setAttribute('partition', accountPartition());
   webview.setAttribute('webpreferences', 'webSecurity=yes,contextIsolation=yes,sandbox=yes,allowRunningInsecureContent=no');
   webview.className = 'animeon-tab-webview';
   webview.style.cssText = 'display:none;visibility:hidden;position:absolute;inset:0;width:100%;height:100%;border:0;z-index:0;background:#050507;';
@@ -115,6 +125,7 @@ function createTabWebview(index) {
   attachWebviewListeners(webview);
   webview.addEventListener('dom-ready', () => {
     if (tabWebviews[index] === webview && activeWebview === webview) {
+      try { window.native.setActiveSiteWebview(webview.getWebContentsId()); } catch {}
       try { webview.focus(); } catch {}
       try { updateNav(); } catch {}
       try { applyGuestStyles(); } catch {}
@@ -130,6 +141,7 @@ function showTabWebview(index) {
   const target = tabWebviews[index];
   if (!target) return false;
   activeWebview = target;
+  try { window.native.setActiveSiteWebview(target.getWebContentsId()); } catch {}
   tabWebviews.forEach((webview, i) => {
     if (!webview) return;
     const active = i === index;
@@ -155,7 +167,7 @@ const btnSite = document.getElementById('btn-site');
 const btnMax = document.getElementById('btn-max');
 const btnFs = document.getElementById('btn-fs');
 const btnClose = document.getElementById('btn-close');
-btnBack?.addEventListener('click', () => { if (wv.canGo()) wv.goBack(); });
+btnBack?.addEventListener('click', () => { if (wv.canGoBack()) wv.goBack(); });
 btnFwd?.addEventListener('click', () => { if (wv.canGoForward()) wv.goForward(); });
 btnHome?.addEventListener('click', () => openSite(currentSite || cfg.site || 'cc'));
 btnReload?.addEventListener('click', () => wv.reload());
@@ -305,7 +317,6 @@ setTimeout(() => {
 }, 8000);
 let currentSite = null;
 
-const cfg = window.native.getConfig() || {};
 firstLaunchOnboarding = cfg.onboardingComplete !== true;
 window.__startupOnboarding = firstLaunchOnboarding;
 const accessKeyFeature = initAccessKeyFeature({
@@ -316,6 +327,15 @@ const accessKeyFeature = initAccessKeyFeature({
 });
 const DEFAULT_DISCORD_RPC_SETTINGS = {
   enabled: true,
+  showEpisode: true,
+  showSeason: true,
+  showTime: true,
+  showWhenIdle: true,
+  showPoster: true,
+  clickTitle: true,
+  clickState: true,
+  clickPoster: true,
+  useAnimePoster: true,
 };
 cfg.discordRpc = { ...DEFAULT_DISCORD_RPC_SETTINGS, ...(cfg.discordRpc || {}) };
 delete cfg.discordRpc.showDubbing;
@@ -337,7 +357,10 @@ for (const [key, input] of Object.entries(discordRpcControls)) {
     }
     cfg.discordRpc = { ...DEFAULT_DISCORD_RPC_SETTINGS, ...(result.settings || cfg.discordRpc) };
     syncDiscordRpcControls();
-    toast(key === 'enabled' ? (input.checked ? 'Статус Discord включён' : 'Статус Discord выключен') : 'Настройки Discord сохранены');
+    toast(
+      key === 'enabled' ? (input.checked ? 'Статус Discord включён' : 'Статус Discord выключен') : 'Настройки Discord сохранены',
+      key === 'enabled' && !input.checked ? 'error' : 'ok',
+    );
   });
 }
 
@@ -510,7 +533,7 @@ async function applyGuestStyles() {
   try { await window.native.applySiteCss(css); } catch {}
 }
 
-const { applyTheme, getActiveTheme } = initThemeController({ cfg, store, applyGuestStyles, toast });
+const { applyTheme, getActiveTheme } = initThemeController({ cfg, store, applyGuestStyles, toast, native: window.native });
 
 function activateSite(id, { save = true, updatePicker = true } = {}) {
   currentSite = id;
@@ -958,7 +981,7 @@ volumeSlider?.addEventListener('input', () => {
 volumeMinus?.addEventListener('click', () => { window.native.setVolume(-5); setTimeout(refreshVolume, 50); });
 volumePlus?.addEventListener('click', () => { window.native.setVolume(5); setTimeout(refreshVolume, 50); });
 volumeMute?.addEventListener('click', () => { window.native.toggleMute(); setTimeout(refreshVolume, 50); });
-window.native.onAlwaysOnTop?.(v => { if (alwaysOnTopToggle) alwaysOnTopToggle.checked = !!v; toast(v ? 'Режим «Поверх всех окон» включён' : 'Режим «Поверх всех окон» выключен'); });
+window.native.onAlwaysOnTop?.(v => { if (alwaysOnTopToggle) alwaysOnTopToggle.checked = !!v; toast(v ? 'Режим «Поверх всех окон» включён' : 'Режим «Поверх всех окон» выключен', v ? 'ok' : 'error'); });
 window.native.onToast?.(v => { if (v?.message || v?.title) toast(v.title || v.message, v.type || 'ok', { body: v.body || '' }); });
 window.native.onMediaOverlay?.(v => { if (!mediaOverlay || !mediaOverlayText) return; mediaOverlayText.textContent = v.type === 'seek' ? `${v.value > 0 ? '+' : ''}${v.value} сек.` : `${v.muted ? 'Звук выключен' : `Громкость ${v.value}%`}`; mediaOverlay.classList.remove('show'); void mediaOverlay.offsetWidth; mediaOverlay.classList.add('show'); clearTimeout(window.__mediaOverlayTimer); window.__mediaOverlayTimer = setTimeout(() => mediaOverlay.classList.remove('show'), 850); });
 function openSettings() {
@@ -978,6 +1001,11 @@ function initSettingsNavigation() {
   if (discordSection && networkSection) networkSection.after(discordSection);
   const items=()=>Array.from(document.querySelectorAll('#settings-nav-list .settings-nav-item'));
   const content=document.getElementById('st-content');
+  const accountsSection = document.querySelector('.settings-group-card[data-settings-group="accounts"]');
+  const accessKeySection = document.querySelector('.settings-group-card[data-settings-group="accessKey"]');
+  const screenshotsSection = document.querySelector('.settings-group-card[data-settings-group="screenshots"]');
+  if (accountsSection && accessKeySection) accessKeySection.after(accountsSection);
+  if (screenshotsSection && accountsSection) accountsSection.after(screenshotsSection);
   if(!items().length) return;
   const applyFilter=()=>{
     const btn=items().find(x=>x.classList.contains('active'))||items()[0];
@@ -1106,7 +1134,7 @@ document.getElementById('btn-screenshots-folder-settings')?.addEventListener('cl
 document.getElementById('btn-about-check-update')?.addEventListener('click',async()=>{const r=await window.native.checkUpdate();if(r?.hasUpdate)toast('Вышла новая версия','ok',{body:`v${r.latest} — нажмите, чтобы скачать`,duration:8000,action:{icon:'go',title:'Открыть окно обновления',onClick:()=>window.native.updOpen()}});else if(r?.ok)toast('Обновлений нет');else toast(`Не удалось проверить: ${r?.reason||'неизвестная ошибка'}`,'error');});
 document.getElementById('btn-about-source')?.addEventListener('click',()=>window.native.openExternal('https://github.com/Neukluziy/animeon-desktop'));
 document.getElementById('btn-reset-positions')?.addEventListener('click',()=>{store('playbackPositions',{});toast('Позиции просмотра очищены');});
-document.getElementById('btn-sleep-timer')?.addEventListener('click',async()=>{const raw=prompt('Через сколько минут остановить видео? Введите 0 для отключения.',String(cfg.sleepTimer?.minutes||0));if(raw===null)return;const m=Math.max(0,Number(raw)||0);const action=m?(prompt('Действие: pause — остановить видео, tray — убрать в трей, exit — закрыть приложение.',cfg.sleepTimer?.action||'pause')||'pause'):'pause';const r=await window.native.setSleepTimer(m,action);toast(r?.enabled?`Таймер установлен на ${m} мин.`:'Таймер сна отключён');});
+document.getElementById('btn-sleep-timer')?.addEventListener('click',async()=>{const raw=prompt('Через сколько минут остановить видео? Введите 0 для отключения.',String(cfg.sleepTimer?.minutes||0));if(raw===null)return;const m=Math.max(0,Number(raw)||0);const action=m?(prompt('Действие: pause — остановить видео, tray — убрать в трей, exit — закрыть приложение.',cfg.sleepTimer?.action||'pause')||'pause'):'pause';const r=await window.native.setSleepTimer(m,action);toast(r?.enabled?`Таймер установлен на ${m} мин.`:'Таймер сна отключён',r?.enabled?'ok':'error');});
 
 function openFind(){ if(!findBar)return; findBar.hidden=false; findBar.style.display='flex'; findBar.setAttribute('aria-hidden','false'); requestAnimationFrame(()=>{findInput?.focus(); findInput?.select();}); }
 function closeFind(){ if(findBar){findBar.hidden=true;findBar.style.display='none';findBar.setAttribute('aria-hidden','true');findCount.textContent='';} window.native.stopFindInPage?.(); }
@@ -1126,6 +1154,15 @@ const { tabTitle, toggleTabsSidebar, renderTabs } = initTabsView({
   webview: wv,
   switchTab,
   closeTab,
+});
+initAccounts({ native: window.native, cfg, toast, askConfirmation });
+document.getElementById('btn-new-window')?.addEventListener('click', async () => {
+  try {
+    const result = await window.native.openNewWindow();
+    if (!result?.ok) throw new Error(result?.error || 'Не удалось создать окно');
+  } catch (error) {
+    toast(error?.message || 'Не удалось создать окно', 'error');
+  }
 });
 async function saveTabs(){await window.native.tabsSet(pageTabs,activeTab);renderTabs();}
 function updateSiteFromUrl(url){
@@ -1242,7 +1279,7 @@ btnDnd?.addEventListener('click',async()=>{
     if(!r?.ok)throw new Error('dnd');
     cfg.doNotDisturb=enabled;
     updateDndButton();
-    toast(enabled?'Уведомления приостановлены':'Уведомления снова включены');
+    toast(enabled?'Уведомления приостановлены':'Уведомления снова включены', enabled ? 'error' : 'ok');
   }catch{toast('Не удалось изменить настройки уведомлений','error');}
 });
 updateDndButton();
@@ -1379,7 +1416,7 @@ offlineRetry?.addEventListener('click', () => { hideError(); wv.reload(); });
 
 function updateNav() {
   try {
-    btnBack.disabled = !wv.canGo();
+    btnBack.disabled = !wv.canGoBack();
     btnFwd.disabled = !wv.canGoForward();
   } catch {}
 }
@@ -1408,8 +1445,8 @@ function rememberPage(url) {
 }
 
 
-wv?.addEventListener('did-navigate', e => rememberPage(e.url));
-wv?.addEventListener('did-navigate-in-page', e => rememberPage(e.url));
+wv?.addEventListener('did-navigate', e => { rememberPage(e.url); updateNav(); });
+wv?.addEventListener('did-navigate-in-page', e => { rememberPage(e.url); updateNav(); });
 wv?.addEventListener('dom-ready', () => {
   document.body.classList.remove('page-soft-loading');
   document.body.classList.add('page-ready');

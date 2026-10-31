@@ -1,4 +1,4 @@
-export function initThemeController({ cfg, store, applyGuestStyles, toast }) {
+export function initThemeController({ cfg, store, applyGuestStyles, toast, native }) {
   const themeSwatches = [...document.querySelectorAll('.theme-swatch')];
   const themeName = document.getElementById('theme-name');
   const customColorInput = document.getElementById('custom-color-input');
@@ -215,29 +215,26 @@ export function initThemeController({ cfg, store, applyGuestStyles, toast }) {
   customPickerCopy?.addEventListener('click', async () => {
     const value = normalizeHex(cfg.custom || '#8B5CF6');
     try {
-      await navigator.clipboard.writeText(value);
-    } catch {
-      const textarea = document.createElement('textarea');
-      textarea.value = value;
-      document.body.appendChild(textarea);
-      textarea.select();
-      document.execCommand('copy');
-      textarea.remove();
+      const result = await native.copyText(value);
+      if (!result?.ok) throw new Error(result?.error || 'Не удалось скопировать цвет');
+      toast('HEX скопирован');
+    } catch (error) {
+      toast(String(error?.message || error || 'Не удалось скопировать цвет'), 'error');
     }
-    toast('HEX скопирован');
   });
   customColorCopy?.addEventListener('click', async () => {
     const value = normalizeHex(cfg.custom || '#8B5CF6');
     try {
-      await navigator.clipboard.writeText(value);
+      const result = await native.copyText(value);
+      if (!result?.ok) throw new Error(result?.error || 'Не удалось скопировать цвет');
       customColorCopy.querySelector('span:last-child').textContent = 'Скопировано';
       setTimeout(() => {
         const label = customColorCopy.querySelector('span:last-child');
         if (label) label.textContent = 'Копировать';
       }, 1100);
       toast('HEX скопирован');
-    } catch {
-      toast('Не удалось скопировать', 'error');
+    } catch (error) {
+      toast(String(error?.message || error || 'Не удалось скопировать цвет'), 'error');
     }
   });
   customPickerEyedropper?.addEventListener('click', async () => {

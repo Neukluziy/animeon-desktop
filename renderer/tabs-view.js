@@ -2,7 +2,9 @@ export function initTabsView({ getPageTabs, getActiveTab, getActiveWebview, webv
   const pageToolbar = document.getElementById('page-toolbar');
   const tabsBar = document.getElementById('tabs-bar');
   const tabsCount = document.getElementById('tabs-count');
+  const tabsToggleCount = document.getElementById('tabs-toggle-count');
   const tabsSidebarToggle = document.getElementById('btn-tabs-sidebar-toggle');
+  let closeAnimationTimer;
 
   function tabTitle(item) {
     return String(item?.title || item?.url || 'Новая страница').replace(/^AnimeOn\s*[—-]\s*/i, '').slice(0, 48);
@@ -10,7 +12,12 @@ export function initTabsView({ getPageTabs, getActiveTab, getActiveWebview, webv
 
   function toggleTabsSidebar(forceOpen) {
     const open = typeof forceOpen === 'boolean' ? forceOpen : !pageToolbar?.classList.contains('is-open');
+    clearTimeout(closeAnimationTimer);
     pageToolbar?.classList.toggle('is-open', open);
+    pageToolbar?.classList.toggle('is-closing', !open);
+    if (!open) {
+      closeAnimationTimer = setTimeout(() => pageToolbar?.classList.remove('is-closing'), 400);
+    }
     tabsSidebarToggle?.classList.toggle('is-open', open);
     tabsSidebarToggle?.setAttribute('aria-expanded', String(open));
     tabsSidebarToggle?.setAttribute('aria-label', open ? 'Закрыть список вкладок' : 'Открыть список вкладок');
@@ -29,6 +36,7 @@ export function initTabsView({ getPageTabs, getActiveTab, getActiveWebview, webv
     if (!tabsBar) return;
     tabsBar.innerHTML = '';
     if (tabsCount) tabsCount.textContent = String(pageTabs.length);
+    if (tabsToggleCount) tabsToggleCount.textContent = String(pageTabs.length);
     pageTabs.forEach((tab, index) => {
       const button = document.createElement('button');
       button.className = 'tab-item' + (index === activeTab ? ' active' : '');
