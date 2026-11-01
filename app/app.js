@@ -851,8 +851,8 @@ function localHotkeyActions() {
     show: showMainWindow,
     toggleWindow: toggleTrayWindow,
     playPause: () => togglePlayback(),
-    volumeUp: () => setVolume(5),
-    volumeDown: () => setVolume(-5),
+    volumeUp: () => setVolume(1),
+    volumeDown: () => setVolume(-1),
     mute: () => setMuted(null),
     seekBack: () => seekVideo(-10),
     seekForward: () => seekVideo(10),
@@ -1490,7 +1490,6 @@ ipcMain.on('app:toggle-devtools', (event) => {
 
 const { checkUpdate } = createUpdateManager({
   app,
-  BrowserWindow,
   Notification,
   ipcMain,
   config,
@@ -1535,7 +1534,12 @@ ipcMain.on('taskbar-progress', (event, value) => {
 });
 
 ipcMain.on('app:info', (e) => {
-  e.returnValue = { version: APP_VERSION, name: 'AnimeOn Desktop', electron: process.versions.electron };
+  e.returnValue = {
+    version: APP_VERSION,
+    name: 'AnimeOn Desktop',
+    electron: process.versions.electron,
+    isPrimaryWindow: BrowserWindow.fromWebContents(e.sender) === win,
+  };
 });
 
 app.whenReady().then(async () => {

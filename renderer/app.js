@@ -7,6 +7,12 @@ import { initPageLibrary } from './pages.js';
 import { initThemeController } from './theme.js';
 import { initSiteAppearance } from './site-appearance.js';
 import { initAccounts } from './accounts.js';
+import { initUpdatePanel } from '../windows/update.js';
+
+const updateHost = document.getElementById('update-overlay-host');
+const updateTemplate = document.getElementById('update-panel-template');
+if (!updateHost || !updateTemplate) throw new Error('Не найдена разметка панели обновления');
+initUpdatePanel({ native: window.native, host: updateHost, template: updateTemplate });
 
 const cfg = window.native.getConfig() || {};
 const activeAccount = () => cfg.accounts?.find((item) => item.id === cfg.activeAccountId);
@@ -54,10 +60,22 @@ firstWebview.className = 'tab-active';
 firstWebview.setAttribute('allowpopups', '');
 firstWebview.setAttribute('partition', accountPartition());
 firstWebview.setAttribute('webpreferences', 'webSecurity=yes,contextIsolation=yes,sandbox=yes,allowRunningInsecureContent=no');
+firstWebview.setAttribute('preload', new URL('../app/site-preload.js', import.meta.url).href);
 webviewHost?.appendChild(firstWebview);
 let activeWebview = firstWebview;
 const webviewListeners = [];
 const webviewListenerMap = new WeakMap();
+
+function attachSiteZoomListener(webview) {
+  webview.addEventListener('ipc-message', (event) => {
+    if (webview !== activeWebview || event.channel !== 'site:ctrl-wheel-zoom') return;
+    const delta = event.args?.[0];
+    if (delta !== 0.1 && delta !== -0.1) return;
+    window.native.zoom(delta);
+  });
+}
+
+attachSiteZoomListener(firstWebview);
 
 function attachWebviewListeners(webview) {
   if (!webview) return;
@@ -118,10 +136,12 @@ function createTabWebview(index) {
   webview.setAttribute('allowpopups', '');
   webview.setAttribute('partition', accountPartition());
   webview.setAttribute('webpreferences', 'webSecurity=yes,contextIsolation=yes,sandbox=yes,allowRunningInsecureContent=no');
+  webview.setAttribute('preload', new URL('../app/site-preload.js', import.meta.url).href);
   webview.className = 'animeon-tab-webview';
   webview.style.cssText = 'display:none;visibility:hidden;position:absolute;inset:0;width:100%;height:100%;border:0;z-index:0;background:#050507;';
   webviewHost?.appendChild(webview);
   tabWebviews[index] = webview;
+  attachSiteZoomListener(webview);
   attachWebviewListeners(webview);
   webview.addEventListener('dom-ready', () => {
     if (tabWebviews[index] === webview && activeWebview === webview) {
@@ -752,6 +772,7 @@ function toast(message, type='ok', extra={}) {
   const kind = toastIcons[type] ? type : 'ok';
   const el = document.createElement('div');
   el.className = `toast ${kind}`;
+  if (extra.variant === 'update') el.classList.add('toast-update');
   el.setAttribute('role', kind === 'error' ? 'alert' : 'status');
   el.setAttribute('aria-live', kind === 'error' ? 'assertive' : 'polite');
   el.innerHTML = '<div class="t-icon">' + toastIcons[kind] + '</div>' +
@@ -978,8 +999,8 @@ volumeSlider?.addEventListener('input', () => {
   volumeSlider.dataset.last = String(target);
   setVolumeUI({ volume: target, muted: false });
 });
-volumeMinus?.addEventListener('click', () => { window.native.setVolume(-5); setTimeout(refreshVolume, 50); });
-volumePlus?.addEventListener('click', () => { window.native.setVolume(5); setTimeout(refreshVolume, 50); });
+volumeMinus?.addEventListener('click', () => { window.native.setVolume(-1); setTimeout(refreshVolume, 50); });
+volumePlus?.addEventListener('click', () => { window.native.setVolume(1); setTimeout(refreshVolume, 50); });
 volumeMute?.addEventListener('click', () => { window.native.toggleMute(); setTimeout(refreshVolume, 50); });
 window.native.onAlwaysOnTop?.(v => { if (alwaysOnTopToggle) alwaysOnTopToggle.checked = !!v; toast(v ? 'Режим «Поверх всех окон» включён' : 'Режим «Поверх всех окон» выключен', v ? 'ok' : 'error'); });
 window.native.onToast?.(v => { if (v?.message || v?.title) toast(v.title || v.message, v.type || 'ok', { body: v.body || '' }); });
@@ -1131,7 +1152,9 @@ document.getElementById('btn-copy-log')?.addEventListener('click',async()=>{cons
 document.getElementById('btn-clear-log')?.addEventListener('click',async()=>{if(await askConfirmation('Очистить журнал ошибок?', 'Очистить журнал')){const r=await window.native.clearLogs();toast(r?.ok?'Журнал очищен':'Не удалось очистить журнал',r?.ok?'ok':'error');}});
 document.getElementById('btn-screenshots-open-settings')?.addEventListener('click',openScreenshots);
 document.getElementById('btn-screenshots-folder-settings')?.addEventListener('click',()=>window.native.openScreenshotsFolder());
-document.getElementById('btn-about-check-update')?.addEventListener('click',async()=>{const r=await window.native.checkUpdate();if(r?.hasUpdate)toast('Вышла новая версия','ok',{body:`v${r.latest} — нажмите, чтобы скачать`,duration:8000,action:{icon:'go',title:'Открыть окно обновления',onClick:()=>window.native.updOpen()}});else if(r?.ok)toast('Обновлений нет');else toast(`Не удалось проверить: ${r?.reason||'неизвестная ошибка'}`,'error');});
+document.getElementById('btn-about-check-update')?.addEventListener('click', async () => {
+  await refreshUpdateStatus(false, true);
+});
 document.getElementById('btn-about-source')?.addEventListener('click',()=>window.native.openExternal('https://github.com/Neukluziy/animeon-desktop'));
 document.getElementById('btn-reset-positions')?.addEventListener('click',()=>{store('playbackPositions',{});toast('Позиции просмотра очищены');});
 document.getElementById('btn-sleep-timer')?.addEventListener('click',async()=>{const raw=prompt('Через сколько минут остановить видео? Введите 0 для отключения.',String(cfg.sleepTimer?.minutes||0));if(raw===null)return;const m=Math.max(0,Number(raw)||0);const action=m?(prompt('Действие: pause — остановить видео, tray — убрать в трей, exit — закрыть приложение.',cfg.sleepTimer?.action||'pause')||'pause'):'pause';const r=await window.native.setSleepTimer(m,action);toast(r?.enabled?`Таймер установлен на ${m} мин.`:'Таймер сна отключён',r?.enabled?'ok':'error');});
@@ -1462,8 +1485,8 @@ function escapeHtml(value) {
 const commands = [
   ['Скорость 1×', () => { currentPlayerSpeed = 1; window.native.setPlaybackSpeed(1); renderPlayerSpeed(); }],
   ['Скорость 2×', () => { currentPlayerSpeed = 2; window.native.setPlaybackSpeed(2); renderPlayerSpeed(); }],
-  ['Громче', () => { window.native.setVolume(5); setTimeout(refreshVolume, 50); }],
-  ['Тише', () => { window.native.setVolume(-5); setTimeout(refreshVolume, 50); }],
+  ['Громче', () => { window.native.setVolume(1); setTimeout(refreshVolume, 50); }],
+  ['Тише', () => { window.native.setVolume(-1); setTimeout(refreshVolume, 50); }],
   ['Выключить / включить звук', () => { window.native.toggleMute(); setTimeout(refreshVolume, 50); }],
   ['10 секунд назад', () => window.native.seek(-10)],
   ['10 секунд вперёд', () => window.native.seek(10)],
@@ -1728,33 +1751,60 @@ window.native.onRestartWebview?.(() => { try { wv.reload(); } catch {} });
 window.native.onRestartWebview?.(() => { try { wv.reload(); } catch {} });
 
 let checkingUpdate = false;
+let notifiedUpdateVersion = null;
 
-async function refreshUpdateStatus(auto = false) {
-  if (checkingUpdate) return;
+function notifyUpdateAvailable(info) {
+  if (!info?.hasUpdate || notifiedUpdateVersion === info.latest) return;
+  notifiedUpdateVersion = info.latest;
+  toast('Доступна новая версия AnimeOn', 'ok', {
+    variant: 'update',
+    body: `Версия v${info.latest} уже доступна`,
+    duration: 12000,
+    action: {
+      icon: 'go',
+      title: 'Открыть обновление',
+      onClick: () => window.native.updOpen(),
+    },
+  });
+}
+
+async function refreshUpdateStatus(auto = false, showResultToast = false) {
+  if (checkingUpdate || (auto && (cfg.autoUpdate === false || !appInfo.isPrimaryWindow))) return;
   checkingUpdate = true;
   if (!auto) updStatus.textContent = 'Проверяем…';
-  btnUpdCheck.disabled = true;
+  const checkButtons = [btnUpdCheck, document.getElementById('btn-about-check-update')].filter(Boolean);
+  checkButtons.forEach((button) => { button.disabled = true; });
   btnUpdOpenRelease?.classList.add('hidden');
 
-  const res = await window.native.checkUpdate();
+  try {
+    const res = await window.native.checkUpdate();
 
-  window.__lastUpdate = res;
-  if (!res || !res.ok) {
-    updStatus.textContent = auto
-      ? ''
-      : 'Не удалось проверить обновления. Проверь подключение к интернету';
-  } else if (res.hasUpdate) {
-    updStatus.textContent = `Свежая версия — v${res.latest} (у тебя v${res.current})`;
-    btnUpdGet.classList.remove('hidden');
-    btnUpdGet.onclick = () => window.native.updOpen();
-    if (btnUpdOpenRelease && res.url) { btnUpdOpenRelease.classList.remove('hidden'); }
-  } else {
-    updStatus.textContent = `У вас последняя версия — v${res.current}`;
-    btnUpdGet.classList.add('hidden');
+    window.__lastUpdate = res;
+    if (!res || !res.ok) {
+      updStatus.textContent = auto
+        ? ''
+        : 'Не удалось проверить обновления. Проверь подключение к интернету';
+      if (showResultToast) toast(`Не удалось проверить: ${res?.reason || 'неизвестная ошибка'}`, 'error');
+    } else if (res.hasUpdate) {
+      updStatus.textContent = `Свежая версия — v${res.latest} (у тебя v${res.current})`;
+      btnUpdGet.classList.remove('hidden');
+      btnUpdGet.onclick = () => window.native.updOpen();
+      if (btnUpdOpenRelease && res.url) { btnUpdOpenRelease.classList.remove('hidden'); }
+      if (auto) notifyUpdateAvailable(res);
+      else window.native.updOpen();
+    } else {
+      updStatus.textContent = `У вас последняя версия — v${res.current}`;
+      btnUpdGet.classList.add('hidden');
+      if (showResultToast) toast('Обновлений нет');
+    }
+  } catch (error) {
+    console.error('[AnimeOn] Не удалось проверить обновления:', error);
+    if (!auto) updStatus.textContent = 'Не удалось проверить обновления. Проверь подключение к интернету';
+    if (showResultToast) toast('Не удалось проверить обновления', 'error');
+  } finally {
+    checkButtons.forEach((button) => { button.disabled = false; });
+    checkingUpdate = false;
   }
-
-  btnUpdCheck.disabled = false;
-  checkingUpdate = false;
 }
 
 btnUpdCheck.addEventListener('click', () => refreshUpdateStatus(false));
@@ -1807,7 +1857,7 @@ try {
   try { revealApp(0); } catch {}
 }
 
-setTimeout(() => refreshUpdateStatus(true), 8000);
+setTimeout(() => refreshUpdateStatus(true), 2500);
 
 initLocalTools({ native: window.native, cfg, toast });
 
