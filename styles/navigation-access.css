@@ -343,6 +343,7 @@ body.chrome-hidden #page-toolbar,body.tray-menu #page-toolbar{display:none!impor
 #titlebar .nav>button:hover,#titlebar .win-btns>button:hover,#titlebar .page-actions>.page-action:hover,#titlebar .volume-wrap>button:hover{border-color:rgba(var(--a-rgb),.42);background-color:rgba(var(--a-rgb),.18);color:#fff}
 #titlebar .win-btns>button{border-color:transparent!important}
 #titlebar .win-btns>#btn-close svg{transform:translateX(-1px)}
+#volume-panel{background:linear-gradient(135deg,rgba(var(--a-rgb),.16),rgba(22,19,30,.96))!important;border-color:rgba(var(--al-rgb),.28)!important;box-shadow:0 8px 24px rgba(0,0,0,.24),inset 0 1px 0 rgba(255,255,255,.1),0 0 18px rgba(var(--a-rgb),.08)!important}
 .tabs-sidebar-toggle,.tabs-count,.tabs-sidebar-mark{transition:background .2s ease,border-color .2s ease,color .2s ease,box-shadow .2s ease}
 
 .access-key-layer{

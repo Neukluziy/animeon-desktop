@@ -4,7 +4,6 @@ const fs = require('node:fs');
 
 function createUpdateManager({
   app,
-  BrowserWindow,
   Notification,
   ipcMain,
   config,
@@ -29,7 +28,8 @@ function findReleaseAsset(assets) {
 let lastUpdate = null;
 let updateNotified = false;
 let downloadedInstaller = null;
-let updateWindow = null;
+let downloadedInstallerVersion = null;
+let activeDownload = null;
 
 async function checkUpdate(silent = !!config?.silentUpdates) {
   try {
@@ -68,6 +68,10 @@ async function checkUpdate(silent = !!config?.silentUpdates) {
         .slice(0, 12),
       silent,
     };
+    if (lastUpdate?.latest !== info.latest) {
+      downloadedInstaller = null;
+      downloadedInstallerVersion = null;
+    }
     lastUpdate = info;
     if (info.hasUpdate && !updateNotified) {
       updateNotified = true;
@@ -88,72 +92,155 @@ function showUpdateToast() {
     icon: path.join(__dirname, '../assets', 'logo.png'),
     silent: false,
   });
-  n.on('click', () => openUpdateWindow());
+  n.on('click', () => openUpdatePanel());
   n.show();
 }
 
-function openUpdateWindow() {
-  if (!lastUpdate) return;
-  if (updateWindow && !updateWindow.isDestroyed()) {
-    updateWindow.show();
-    updateWindow.focus();
-    return;
-  }
-  updateWindow = new BrowserWindow({
-    width: 520,
-    height: 690,
-    minWidth: 440,
-    minHeight: 560,
-    frame: false,
-    show: false,
-    backgroundColor: '#0f0d14',
-    icon: path.join(__dirname, '../assets', 'logo.ico'),
-    title: 'Обновление AnimeOn',
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-    },
-  });
-  updateWindow.setMenuBarVisibility(false);
-  updateWindow.loadFile(path.join(__dirname, '../windows/update.html'));
-  updateWindow.once('ready-to-show', () => {
-    updateWindow.show();
-    updateWindow.focus();
-  });
-  updateWindow.webContents.on('did-finish-load', () => {
-    updateWindow.webContents.send('upd:data', lastUpdate);
-  });
-  updateWindow.on('closed', () => {
-    updateWindow = null;
-  });
+function openUpdatePanel() {
+  const win = getWindow();
+  if (!win || win.isDestroyed()) return;
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+  win.webContents.send('upd:open');
 }
 
 function updProgress(pct, stage, extra = {}) {
-  if (updateWindow && !updateWindow.isDestroyed()) {
-    updateWindow.webContents.send('upd:progress', { pct, stage, ...extra });
+  const win = getWindow();
+  if (win && !win.isDestroyed()) win.webContents.send('upd:progress', { pct, stage, ...extra });
+}
+
+function reportDownloadState(download, stage) {
+  const pct = download.total > 0 ? Math.min(100, (download.received / download.total) * 100) : null;
+  updProgress(pct, stage, {
+    received: download.received,
+    total: download.total,
+    speed: 0,
+  });
+}
+
+async function verifyInstallerFile(file, info) {
+  let stat;
+  try {
+    stat = await fs.promises.stat(file);
+  } catch (error) {
+    if (error.code === 'ENOENT') return false;
+    throw error;
+  }
+  if (!stat.isFile() || !stat.size) return false;
+  if (info.size > 0 && stat.size !== info.size) return false;
+  if (info.digest) {
+    const expected = String(info.digest).replace(/^sha256:/i, '');
+    if (!/^[a-f0-9]{64}$/i.test(expected)) return false;
+    const hash = require('node:crypto').createHash('sha256');
+    for await (const chunk of fs.createReadStream(file)) hash.update(chunk);
+    return hash.digest('hex').toLowerCase() === expected.toLowerCase();
+  }
+  return info.size > 0 && stat.size === info.size;
+}
+
+async function restoreDownloadedInstaller(info) {
+  if (!info?.ok || !info.hasUpdate || activeDownload) return false;
+  const file = path.join(app.getPath('temp'), `AnimeOn-Setup-${info.latest}.exe`);
+  if (!await verifyInstallerFile(file, info)) {
+    if (downloadedInstallerVersion === info.latest) {
+      downloadedInstaller = null;
+      downloadedInstallerVersion = null;
+    }
+    return false;
+  }
+  downloadedInstaller = file;
+  downloadedInstallerVersion = info.latest;
+  return true;
+}
+
+function setDownloadPaused(paused) {
+  const download = activeDownload;
+  if (!download || download.cancelled || typeof paused !== 'boolean') return;
+  download.paused = paused;
+  if (!paused) {
+    const resume = download.resume;
+    download.resume = null;
+    resume?.();
+  }
+  reportDownloadState(download, paused ? 'paused' : 'download');
+}
+
+function cancelDownload() {
+  const download = activeDownload;
+  if (!download || download.cancelled) return;
+  download.cancelled = true;
+  download.controller.abort();
+  const resume = download.resume;
+  download.resume = null;
+  resume?.();
+}
+
+async function waitForDownloadResume(download) {
+  while (download.paused && !download.cancelled) {
+    await new Promise((resolve) => { download.resume = resolve; });
+  }
+  if (download.cancelled || download.timedOut) {
+    const error = new Error('Скачивание отменено');
+    error.name = 'AbortError';
+    throw error;
   }
 }
 
 async function downloadUpdate() {
   if (!lastUpdate || !lastUpdate.url) return { ok: false, error: 'нет данных об обновлении' };
+  if (activeDownload) return { ok: false, error: 'скачивание уже выполняется' };
+  const existingInstaller = path.join(app.getPath('temp'), `AnimeOn-Setup-${lastUpdate.latest}.exe`);
+  if (await verifyInstallerFile(existingInstaller, lastUpdate)) {
+    downloadedInstaller = existingInstaller;
+    downloadedInstallerVersion = lastUpdate.latest;
+    const size = (await fs.promises.stat(existingInstaller)).size;
+    updProgress(100, 'ready', { received: size, total: lastUpdate.size || size, speed: 0 });
+    return { ok: true, cached: true };
+  }
+  const download = {
+    controller: new AbortController(),
+    paused: false,
+    cancelled: false,
+    resume: null,
+    received: 0,
+    total: 0,
+    timedOut: false,
+  };
+  activeDownload = download;
+  let dest;
+  let ws;
+  let writerClosed = Promise.resolve();
+  const timeout = setTimeout(() => {
+    download.timedOut = true;
+    download.controller.abort();
+    const resume = download.resume;
+    download.resume = null;
+    resume?.();
+  }, 600000);
   try {
-    const dest = path.join(app.getPath('temp'), `AnimeOn-Setup-${lastUpdate.latest}.exe`);
+    dest = path.join(app.getPath('temp'), `AnimeOn-Setup-${lastUpdate.latest}.exe`);
+    downloadedInstaller = null;
     updProgress(0, 'download');
-    const res = await fetch(lastUpdate.url, { signal: AbortSignal.timeout(600000) });
+    const res = await fetch(lastUpdate.url, { signal: download.controller.signal });
     if (!res.ok || !res.body) throw new Error('HTTP ' + res.status);
     const total = Number(res.headers.get('content-length')) || 0;
-    const ws = fs.createWriteStream(dest);
+    download.total = total;
+    ws = fs.createWriteStream(dest);
+    writerClosed = new Promise((resolve) => ws.once('close', resolve));
     let received = 0;
     let lastPct = -1;
     let lastTime = Date.now();
     let lastBytes = 0;
     const reader = res.body.getReader();
     for (;;) {
+      await waitForDownloadResume(download);
       const { value, done } = await reader.read();
       if (done) break;
+      await waitForDownloadResume(download);
       ws.write(Buffer.from(value));
       received += value.length;
+      download.received = received;
       const now = Date.now();
       if (now - lastTime >= 180) {
         const speed = Math.max(0, (received - lastBytes) / Math.max(0.18, (now - lastTime) / 1000));
@@ -198,13 +285,39 @@ async function downloadUpdate() {
       } catch {}
     }
     downloadedInstaller = dest;
+    downloadedInstallerVersion = lastUpdate.latest;
     updProgress(100, 'ready', { received, total, speed: 0 });
     if (getWindow() && !getWindow().isDestroyed()) getWindow().setProgressBar(1);
     setTimeout(() => { if (getWindow() && !getWindow().isDestroyed()) getWindow().setProgressBar(-1); }, 900);
     return { ok: true };
   } catch (err) {
     if (getWindow() && !getWindow().isDestroyed()) getWindow().setProgressBar(-1);
+    if (download.cancelled) {
+      if (ws && !ws.closed) {
+        ws.destroy();
+        await writerClosed;
+      }
+      if (dest && fs.existsSync(dest)) {
+        try {
+          fs.unlinkSync(dest);
+        } catch (cleanupError) {
+          return { ok: false, error: `Не удалось удалить незавершённый файл: ${String(cleanupError.message || cleanupError)}` };
+        }
+      }
+      downloadedInstaller = null;
+      downloadedInstallerVersion = null;
+      updProgress(null, 'cancelled');
+      return { ok: false, cancelled: true };
+    }
+    if (ws && !ws.closed) {
+      ws.destroy();
+      await writerClosed;
+    }
+    if (download.timedOut) return { ok: false, error: 'Истекло время ожидания загрузки' };
     return { ok: false, error: String(err && err.message || err) };
+  } finally {
+    clearTimeout(timeout);
+    if (activeDownload === download) activeDownload = null;
   }
 }
 
@@ -255,7 +368,7 @@ function rollbackUpdate() {
 }
 
 function applyUpdate() {
-  if (!downloadedInstaller || !fs.existsSync(downloadedInstaller)) return false;
+  if (!downloadedInstaller || downloadedInstallerVersion !== lastUpdate?.latest || !fs.existsSync(downloadedInstaller)) return false;
   backupCurrentExecutable();
   const portablePath = process.env.PORTABLE_EXECUTABLE_PATH;
   if (portablePath) {
@@ -282,13 +395,21 @@ function applyUpdate() {
 }
 
 ipcMain.handle('upd:check', (event) => isTrustedAppEvent(event) ? checkUpdate() : { ok: false, reason: 'untrusted sender' });
+ipcMain.handle('upd:get-data', async (event) => {
+  if (!isTrustedAppEvent(event)) return { ok: false, reason: 'untrusted sender' };
+  const info = lastUpdate || await checkUpdate(true);
+  if (!info?.ok) return info;
+  return { ...info, downloaded: await restoreDownloadedInstaller(info) };
+});
 
-ipcMain.on('upd:open', (event) => { if (isTrustedAppEvent(event)) openUpdateWindow(); });
+ipcMain.on('upd:open', (event) => { if (isTrustedAppEvent(event)) openUpdatePanel(); });
 ipcMain.on('upd:close', (event) => {
   if (!isTrustedAppEvent(event)) return;
-  if (updateWindow && !updateWindow.isDestroyed()) updateWindow.close();
+  event.sender.send('upd:close');
 });
-ipcMain.on('upd:install', (event) => { if (isTrustedAppEvent(event)) applyUpdate(); });
+ipcMain.on('upd:pause', (event, paused) => { if (isTrustedAppEvent(event)) setDownloadPaused(paused); });
+ipcMain.on('upd:cancel', (event) => { if (isTrustedAppEvent(event)) cancelDownload(); });
+ipcMain.handle('upd:install', (event) => isTrustedAppEvent(event) ? { ok: applyUpdate() } : { ok: false, error: 'untrusted sender' });
 ipcMain.handle('upd:download', (event) => isTrustedAppEvent(event) ? downloadUpdate() : { ok: false, error: 'untrusted sender' });
 ipcMain.handle('upd:rollback', (event) => isTrustedAppEvent(event) ? rollbackUpdate() : { ok: false, error: 'untrusted sender' });
 
