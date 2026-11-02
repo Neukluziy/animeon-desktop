@@ -162,6 +162,4 @@ npm run dist
 
 Сделано с 💜 [Neukluziy](https://github.com/Neukluziy)
 
-⭐ Если приложение пригодилось, поставьте звезду репозиторию!
-
 </div>
