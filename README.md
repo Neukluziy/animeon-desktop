@@ -24,10 +24,14 @@
 
 Оно сделано для более комфортного просмотра аниме на ПК: с вкладками, горячими клавишами, оформлением под себя и удобными мелочами вокруг плеера.
 
-
 <p align="center">
   <img src="docs/screenshot-main.png" alt="Главное окно" width="100%" />
-   <img src="docs/screenshot-settings.png" alt="Второй скриншот" width="100%" />
+  <br />
+  <sub>Главное окно</sub>
+  <br /><br />
+  <img src="docs/screenshot-settings.png" alt="Настройки" width="100%" />
+  <br />
+  <sub>Настройки</sub>
 </p>
 
 ## 🚀 Возможности
