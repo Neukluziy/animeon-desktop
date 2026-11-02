@@ -26,7 +26,8 @@
 
 
 <p align="center">
-  <img src="docs/screenshot-main.png" alt="Главное окно" width="80%" />
+  <img src="docs/screenshot-main.png" alt="Главное окно" width="100%" />
+   <img src="docs/screenshot-settings.png" alt="Второй скриншот" width="100%" />
 </p>
 
 ## 🚀 Возможности
