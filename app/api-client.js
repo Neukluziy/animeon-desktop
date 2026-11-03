@@ -1,6 +1,5 @@
 const API_BASE = 'https://api.animeon.cloud';
 const API_FALLBACK_BASES = ['https://api.animeon.co'];
-const API_SESSION_PATH = '/api/auth/me';
 const API_VERSION = '1.0.0';
 const DEFAULT_TIMEOUT = 10000;
 
@@ -59,7 +58,9 @@ async function request(path, options = {}) {
       });
       const text = await response.text();
       let data = text;
-      try { data = text ? JSON.parse(text) : null; } catch {}
+      try {
+        data = text ? JSON.parse(text) : null;
+      } catch { void 0; }
       lastResponse = {
         ok: response.ok,
         status: response.status,
@@ -105,8 +106,4 @@ async function get(path, query, options = {}) {
   return request(params.toString() ? `${endpoint}?${params}` : endpoint, { ...options, method: 'GET' });
 }
 
-async function post(path, body, options = {}) {
-  return request(path, { ...options, method: 'POST', body });
-}
-
-module.exports = { API_BASE, API_FALLBACK_BASES, API_SESSION_PATH, API_VERSION, request, get, post, health };
+module.exports = { API_BASE, API_FALLBACK_BASES, API_VERSION, request, get, health };

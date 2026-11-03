@@ -1,6 +1,6 @@
 const crypto = require('node:crypto');
-const fs = require('node:fs');
-const path = require('node:path');
+const fs = require('node:fs/promises');
+const { writeFileAtomically } = require('./persistence');
 
 const KEY_VERSION = 1;
 const FILE_VERSION = 2;
@@ -81,21 +81,21 @@ async function verifyAccessKeyRecord(record, value) {
 }
 
 async function verifyStoredAccessKey(filePath, value, safeStorage) {
-  const record = readAccessKeyFile(filePath, safeStorage);
+  const record = await readAccessKeyFile(filePath, safeStorage);
   return verifyAccessKeyRecord(record, value);
 }
 
-function readAccessKeyFile(filePath, safeStorage) {
-  const fileContents = fs.readFileSync(filePath, 'utf8');
+async function readAccessKeyFile(filePath, safeStorage) {
+  const fileContents = await fs.readFile(filePath, 'utf8');
   const stored = JSON.parse(fileContents);
   const markerPath = `${filePath}.marker`;
-  const markerExists = fs.existsSync(markerPath);
+  const markerExists = await accessKeyFileExists(markerPath);
   let markerMatchesFile = false;
   let interruptedMigrationMarker = false;
   if (markerExists) {
     assertEncryptionAvailable(safeStorage);
     try {
-      const marker = safeStorage.decryptString(fs.readFileSync(markerPath));
+      const marker = safeStorage.decryptString(await fs.readFile(markerPath));
       if (marker === FILE_MARKER) {
         interruptedMigrationMarker = true;
       } else {
@@ -135,34 +135,38 @@ function readAccessKeyFile(filePath, safeStorage) {
   };
 }
 
-function writeAccessKeyFile(filePath, record, safeStorage) {
+async function writeAccessKeyFile(filePath, record, safeStorage) {
   decodeRecord(record);
   assertEncryptionAvailable(safeStorage);
-  const { encrypted, marked, interruptedMigrationMarker, ...persistedRecord } = record;
+  const persistedRecord = { ...record };
+  delete persistedRecord.encrypted;
+  delete persistedRecord.marked;
+  delete persistedRecord.interruptedMigrationMarker;
   const payload = safeStorage.encryptString(JSON.stringify(persistedRecord)).toString('base64');
   const fileContents = Buffer.from(JSON.stringify({ version: FILE_VERSION, payload }), 'utf8');
   const digest = crypto.createHash('sha256').update(fileContents).digest('hex');
   const marker = safeStorage.encryptString(JSON.stringify({ version: FILE_MARKER_VERSION, digest }));
-  const directory = path.dirname(filePath);
-  fs.mkdirSync(directory, { recursive: true });
-  writeAtomically(filePath, fileContents);
-  writeAtomically(`${filePath}.marker`, marker);
+  await writeFileAtomically(filePath, fileContents, { mode: 0o600 });
+  await writeFileAtomically(`${filePath}.marker`, marker, { mode: 0o600 });
 }
 
-function writeAtomically(filePath, contents) {
-  const temporaryPath = `${filePath}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`;
+async function accessKeyFileExists(filePath) {
   try {
-    fs.writeFileSync(temporaryPath, contents, { mode: 0o600, flag: 'wx' });
-    fs.renameSync(temporaryPath, filePath);
+    await fs.access(filePath);
+    return true;
   } catch (error) {
-    try { fs.unlinkSync(temporaryPath); } catch {}
+    if (error.code === 'ENOENT') return false;
     throw error;
   }
 }
 
-function removeAccessKeyMarker(filePath) {
+async function removeAccessKeyMarker(filePath) {
   const markerPath = `${filePath}.marker`;
-  if (fs.existsSync(markerPath)) fs.unlinkSync(markerPath);
+  try {
+    await fs.unlink(markerPath);
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
 }
 
 module.exports = {
@@ -174,4 +178,5 @@ module.exports = {
   verifyStoredAccessKey,
   writeAccessKeyFile,
   removeAccessKeyMarker,
+  accessKeyFileExists,
 };

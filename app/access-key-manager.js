@@ -5,6 +5,7 @@ const {
   verifyStoredAccessKey,
   writeAccessKeyFile,
   removeAccessKeyMarker,
+  accessKeyFileExists,
 } = require('./access-key');
 const { accountPartition } = require('../shared/accounts');
 
@@ -20,6 +21,7 @@ function createAccessKeyManager({
   sitePattern,
   isTrustedAppEvent,
   saveConfig,
+  writeLog,
   getWindow,
   setQuitting,
 }) {
@@ -35,7 +37,9 @@ function createAccessKeyManager({
     guardedSessions.add(siteSession);
     siteSession.webRequest.onBeforeRequest({ urls: ['*://*/*'] }, (details, callback) => {
       let isProtectedSite = false;
-      try { isProtectedSite = sitePattern.test(details.url); } catch {}
+      try { isProtectedSite = sitePattern.test(details.url); } catch (error) {
+        writeLog('warn', 'Could not validate a protected site request', { error: String(error?.message || error) });
+      }
       callback({ cancel: config.accessKeyEnabled && !accessUnlocked && isProtectedSite });
     });
   }
@@ -46,12 +50,13 @@ function createAccessKeyManager({
   }
 
   async function recoverMissingAccessKey() {
-    if (!config.accessKeyEnabled || fs.existsSync(accessKeyPath)) return false;
+    if (!config.accessKeyEnabled || await accessKeyFileExists(accessKeyPath)) return false;
     if (recoveryTask) return recoveryTask;
     recoveryTask = (async () => {
       await clearAccountData();
-      removeAccessKeyMarker(accessKeyPath);
+      await removeAccessKeyMarker(accessKeyPath);
       config.accessKeyEnabled = false;
+      config.accessKeyPromptDismissed = false;
       accessUnlocked = true;
       recoveryNotice = true;
       saveConfig();
@@ -90,7 +95,7 @@ function createAccessKeyManager({
         let type = null;
         let error = '';
         if (enabled) {
-          try { type = readAccessKeyFile(accessKeyPath, safeStorage).type; }
+          try { type = (await readAccessKeyFile(accessKeyPath, safeStorage)).type; }
           catch (readError) { error = String(readError?.message || readError); }
         }
         const recoveredMissingKey = recoveryNotice;
@@ -116,7 +121,7 @@ function createAccessKeyManager({
           return { ok: false, error: 'Введи установленный ключ доступа, чтобы изменить его' };
         }
         const record = await createAccessKeyRecord(type, value);
-        writeAccessKeyFile(accessKeyPath, record, safeStorage);
+        await writeAccessKeyFile(accessKeyPath, record, safeStorage);
         config.accessKeyEnabled = true;
         saveConfig();
         accessUnlocked = true;
@@ -132,25 +137,25 @@ function createAccessKeyManager({
       const retryAfterMs = Math.max(0, lockedUntil - Date.now());
       if (retryAfterMs) return { ok: false, retryAfterMs, error: `Подождите ${Math.ceil(retryAfterMs / 1000)} сек. перед следующей попыткой` };
       try {
-        if (!fs.existsSync(accessKeyPath)) {
+        if (!await accessKeyFileExists(accessKeyPath)) {
           await recoverMissingAccessKey();
           return { ok: false, missing: true, error: 'Файл ключа не найден. Данные аккаунтов очищены.' };
         }
-        const record = readAccessKeyFile(accessKeyPath, safeStorage);
+        const record = await readAccessKeyFile(accessKeyPath, safeStorage);
         if (!await verifyAccessKeyRecord(record, value)) {
           failures += 1;
           if (failures >= 5) {
             failures = 0;
             lockedUntil = Date.now() + 30000;
           }
-          writeAccessKeyFile(accessKeyPath, { ...record, failedAttempts: failures, lockedUntil }, safeStorage);
+          await writeAccessKeyFile(accessKeyPath, { ...record, failedAttempts: failures, lockedUntil }, safeStorage);
           if (lockedUntil > Date.now()) {
             return { ok: false, retryAfterMs: 30000, error: 'Слишком много попыток. Подождите 30 секунд.' };
           }
           return { ok: false, error: 'Неверный ключ доступа' };
         }
         if (!record.encrypted || failures || lockedUntil) {
-          writeAccessKeyFile(accessKeyPath, { ...record, failedAttempts: 0, lockedUntil: 0 }, safeStorage);
+          await writeAccessKeyFile(accessKeyPath, { ...record, failedAttempts: 0, lockedUntil: 0 }, safeStorage);
         }
         failures = 0;
         lockedUntil = 0;
@@ -169,8 +174,13 @@ function createAccessKeyManager({
           return { ok: false, error: 'Введи установленный ключ доступа, чтобы удалить его' };
         }
         config.accessKeyEnabled = false;
-        if (fs.existsSync(accessKeyPath)) fs.unlinkSync(accessKeyPath);
-        removeAccessKeyMarker(accessKeyPath);
+        config.accessKeyPromptDismissed = false;
+        try {
+          await fs.promises.unlink(accessKeyPath);
+        } catch (error) {
+          if (error.code !== 'ENOENT') throw error;
+        }
+        await removeAccessKeyMarker(accessKeyPath);
         saveConfig();
         return { ok: true };
       } catch (error) {
@@ -188,30 +198,30 @@ function createAccessKeyManager({
   }
 
   async function initialize() {
-    if (fs.existsSync(accessKeyPath) && !config.accessKeyEnabled) {
+    guardSession(session.defaultSession);
+    for (const account of config.accounts) guardSession(session.fromPartition(accountPartition(account.id)));
+    if (await accessKeyFileExists(accessKeyPath) && !config.accessKeyEnabled) {
       config.accessKeyEnabled = true;
       accessUnlocked = false;
       saveConfig();
     }
     await recoverMissingAccessKey();
-    if (config.accessKeyEnabled && fs.existsSync(accessKeyPath)) {
+    if (config.accessKeyEnabled && await accessKeyFileExists(accessKeyPath)) {
       try {
-        const record = readAccessKeyFile(accessKeyPath, safeStorage);
+        const record = await readAccessKeyFile(accessKeyPath, safeStorage);
         failures = Number.isInteger(record.failedAttempts) ? Math.min(4, Math.max(0, record.failedAttempts)) : 0;
         lockedUntil = Number.isFinite(record.lockedUntil) ? Math.min(Date.now() + 30000, Math.max(0, record.lockedUntil)) : 0;
         if (!record.encrypted || !record.marked) {
           failures = 0;
           lockedUntil = 0;
-          writeAccessKeyFile(accessKeyPath, { ...record, failedAttempts: 0, lockedUntil: 0 }, safeStorage);
+          await writeAccessKeyFile(accessKeyPath, { ...record, failedAttempts: 0, lockedUntil: 0 }, safeStorage);
         }
       } catch (error) {
         console.error('[AnimeOn] Не удалось проверить файл ключа доступа:', error);
       }
     }
-    fs.mkdirSync(path.dirname(accessKeyPath), { recursive: true });
+    await fs.promises.mkdir(path.dirname(accessKeyPath), { recursive: true });
     watchAccessKeyFile();
-    guardSession(session.defaultSession);
-    for (const account of config.accounts) guardSession(session.fromPartition(accountPartition(account.id)));
   }
 
   return { initialize, recoverMissingAccessKey, registerIpc, guardSession };

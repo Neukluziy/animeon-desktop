@@ -75,8 +75,16 @@ export function initTabsView({ getPageTabs, getActiveTab, getActiveWebview, webv
       button.addEventListener('click', (event) => {
         if (event.target.closest('.tab-close')) return;
         if (index === getActiveTab()) {
-          try { getActiveWebview().focus(); } catch {}
-          try { webview.reload(); } catch {}
+          try {
+            getActiveWebview().focus();
+          } catch (error) {
+            console.error('[AnimeOn] Не удалось сфокусировать активную вкладку:', error);
+          }
+          try {
+            webview.reload();
+          } catch (error) {
+            console.error('[AnimeOn] Не удалось перезагрузить активную вкладку:', error);
+          }
           return;
         }
         switchTab(index);
@@ -93,5 +101,5 @@ export function initTabsView({ getPageTabs, getActiveTab, getActiveWebview, webv
     });
   }
 
-  return { tabTitle, toggleTabsSidebar, renderTabs };
+  return { tabTitle, renderTabs };
 }

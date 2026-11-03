@@ -6,7 +6,7 @@
   <meta http-equiv="Content-Security-Policy"
     content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; script-src 'self'" />
   <title>AnimeOn</title>
-  <link rel="stylesheet" href="styles/main.css" />
+  <link rel="stylesheet" href="styles/main.bundle.css" />
 
   <style>
     #screenshots-modal .screenshots-card .st-head {
@@ -89,7 +89,7 @@
         </button>
         <button class="site-card" data-site="co">
           <span class="sc-ico ru">RU</span>
-          <span class="sc-info"><b data-site-label="co">v1.animeon.co</b><i>Альтернативный сайт</i></span>
+          <span class="sc-info"><b data-site-label="co">v2.animeon.co</b><i>Для России</i></span>
           <span class="sc-mark"></span>
         </button>
       </div>
@@ -225,7 +225,7 @@
 
   <header id="titlebar">
     <div class="brand">
-      <span class="brand-name">ANIME<em>ON</em></span>
+      <span class="brand-name">ANIME<em>ON</em><span id="brand-page-title" hidden></span></span>
     </div>
 
     <div class="page-actions" aria-label="Страницы">
@@ -405,6 +405,8 @@
       <div class="error-actions">
         <button id="btn-error-retry" class="ghost-btn accent">Повторить</button>
         <button id="btn-error-mirror" class="ghost-btn">Другой сайт</button>
+        <button id="btn-error-diagnostics" class="ghost-btn">Диагностика</button>
+        <button id="btn-error-copy-report" class="ghost-btn">Скопировать отчёт</button>
       </div>
     </div>
   </div>
@@ -496,7 +498,11 @@
                 aria-label="Выбрать свой цвет">
                 <span class="custom-color-dot"></span>
               </button>
-              <div class="custom-color-info"><b>Свой цвет</b><span id="custom-color-value">#8B5CF6</span></div>
+              <div class="custom-color-info">
+                <b>Свой цвет</b>
+                <span id="custom-color-value">#8B5CF6</span>
+                <small>Нажми, чтобы открыть палитру</small>
+              </div>
               <button id="custom-color-copy" class="color-mini-btn" type="button"><span
                   class="copy-icon">⧉</span><span>Копировать</span></button>
             </div>
@@ -516,6 +522,31 @@
               </div>
             </div>
             <p class="st-hint">Выбирай любой цвет.</p>
+            <div class="switch-row">
+              <div class="sw-text"><b>Меньше анимаций</b><i>Учитывает системный режим уменьшения движения</i></div>
+              <label class="switch"><input type="checkbox" id="reduce-motion-toggle"><span class="sw-track"><span class="sw-knob"></span></span></label>
+            </div>
+            <div class="switch-row">
+              <div class="sw-text"><b>Высокая контрастность</b><i>Усиленные границы и заметный фокус</i></div>
+              <label class="switch"><input type="checkbox" id="high-contrast-toggle"><span class="sw-track"><span class="sw-knob"></span></span></label>
+            </div>
+            <div class="switch-row">
+              <div class="sw-text"><b>Эффект стекла окна</b><i>Полупрозрачный материал Windows 11; отключается в режиме экономии</i></div>
+              <label class="switch"><input type="checkbox" id="glass-window-toggle"><span class="sw-track"><span class="sw-knob"></span></span></label>
+            </div>
+            <div class="switch-row">
+              <div class="sw-text"><b>Показывать заставку</b><i>Нажмите на заставку, чтобы пропустить её при запуске</i></div>
+              <label class="switch"><input type="checkbox" id="show-splash-toggle"><span class="sw-track"><span class="sw-knob"></span></span></label>
+            </div>
+            <div class="playback-option-row">
+              <label for="title-display-select">Заголовок окна</label>
+              <select id="title-display-select" class="playback-select">
+                <option value="brand">AnimeOn</option>
+                <option value="compact">Компактный</option>
+                <option value="page">AnimeOn + название страницы</option>
+                <option value="page-only">Только название страницы</option>
+              </select>
+            </div>
           </section>
 
           <section class="st-section settings-group-card" data-settings-group="view">
@@ -533,7 +564,7 @@
               </button>
               <button class="site-card" data-site="co">
                 <span class="sc-ico ru">RU</span>
-                <span class="sc-info"><b data-site-label="co">v1.animeon.co</b><i>запасной</i></span>
+                <span class="sc-info"><b data-site-label="co">v2.animeon.co</b><i>для России</i></span>
                 <span class="sc-mark"></span>
               </button>
             </div>
@@ -560,13 +591,22 @@
               <button type="button" class="ghost-btn small" data-site-style-preset="readable">Крупнее</button>
               <button type="button" class="ghost-btn small" data-site-style-preset="glass">Мягкое стекло</button>
             </div>
+            <div class="playback-option-row effects-mode-row">
+              <label for="effects-mode-select">Эффекты интерфейса</label>
+              <select id="effects-mode-select" class="playback-select">
+                <option value="full">Полные</option>
+                <option value="moderate">Умеренные</option>
+                <option value="minimum">Минимум</option>
+              </select>
+            </div>
+            <p class="st-hint">Умеренные и минимальные эффекты снижают нагрузку на графику.</p>
             <div class="visual-grid">
               <label class="visual-control"><span>Скругление <b id="visual-radius-value">18px</b></span><input
                   id="visual-radius" type="range" min="0" max="36" value="18"></label>
               <label class="visual-control"><span>Непрозрачность <b id="visual-opacity-value">92%</b></span><input
                   id="visual-opacity" type="range" min="55" max="100" value="92"></label>
               <label class="visual-control"><span>Размытие панелей <b id="visual-blur-value">0px</b></span><input
-                  id="visual-blur" type="range" min="0" max="40" value="0"></label>
+                  id="visual-blur" type="range" min="0" max="14" value="0"></label>
               <label class="visual-control"><span>Масштаб страницы <b id="visual-scale-value">100%</b></span><input
                   id="visual-scale" type="range" min="85" max="115" value="100"></label>
               <label class="visual-control"><span>Плотность <b id="visual-density-value">100%</b></span><input
@@ -592,8 +632,19 @@
                 <textarea id="site-css-input" spellcheck="false" placeholder="
 Например:
 .card { border-radius: 18px; }"></textarea>
+                <div class="site-css-tools">
+                  <label for="site-css-snippet">Готовый сниппет</label>
+                  <select id="site-css-snippet">
+                    <option value="">Выберите сниппет…</option>
+                    <option value="rounded">Мягкие карточки</option>
+                    <option value="compact">Компактные карточки</option>
+                    <option value="hide-banners">Скрыть баннеры</option>
+                  </select>
+                  <span id="site-css-status" role="status" aria-live="polite"></span>
+                </div>
                 <div class="site-css-actions">
                   <button id="btn-site-css-apply" class="ghost-btn accent">Применить</button>
+                  <button id="btn-site-css-revert" class="ghost-btn" disabled>Откатить</button>
                   <button id="btn-site-css-reset" class="ghost-btn">Сбросить CSS</button>
                 </div>
                 <p class="st-hint">Твой CSS хранится отдельно для каждого сайта.</p>
@@ -794,13 +845,6 @@
             </div>
           </section>
 
-          <section id="remote-access-section" class="st-section settings-group-card" data-settings-group="player">
-            <div class="settings-subgroup">
-              <div class="settings-subtitle">Удалённый доступ с телефона</div>
-              <p class="st-hint">Управление AnimeOn с телефона пока недоступно.</p>
-              <div class="remote-access-status" aria-label="Статус функции">В РАЗРАБОТКЕ</div>
-            </div>
-          </section>
           <section class="st-section settings-group-card" data-settings-group="player">
             <div class="st-title">Вкладки</div>
             <div class="switch-row">
@@ -835,9 +879,10 @@
             <div class="cache-limit-card">
               <div class="cache-limit-head"><span>Лимит кэша</span><span id="cache-info-text" class="cache-info"></span>
               </div>
-              <div class="cache-limit-control"><input id="cache-limit" type="number" min="64" max="16384" step="64"
-                  class="cache-input"><span class="cache-unit">МБ</span></div>
-              <div class="cache-limit-hint">от 64 до 16384 МБ</div>
+              <div class="cache-limit-control"><input id="cache-limit" type="text" inputmode="decimal"
+                  aria-label="Лимит кэша в мегабайтах или знак бесконечности" class="cache-input"><span
+                  class="cache-unit">МБ</span></div>
+              <div class="cache-limit-hint">От 64 МБ до ∞. Введите ∞, чтобы отключить лимит.</div>
             </div>
             <div class="settings-action-grid"><button id="btn-cache-refresh" class="ghost-btn">Обновить
                 размер</button><button id="btn-cache-clean" class="ghost-btn">Очистить сейчас</button></div>
@@ -921,7 +966,7 @@
               <button id="btn-access-key-settings-create" class="ghost-btn accent">Создать ключ</button>
               <button id="btn-access-key-settings-remove" class="ghost-btn danger-outline" hidden>Удалить ключ</button>
             </div>
-            <div class="switch-row access-key-prompt-setting">
+            <div class="switch-row access-key-prompt-setting" hidden>
               <div class="sw-text"><b>Предлагать настроить ключ при запуске</b><i>Показывать предложение, пока ключ
                   доступа не создан</i></div>
               <label class="switch"><input id="access-key-prompt-toggle" type="checkbox"><span class="sw-track"><span

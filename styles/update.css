@@ -13,9 +13,27 @@
 }
 :host(.open) { visibility: visible; pointer-events: auto; }
 :host([hidden]) { display: none !important; }
+:host([data-effects="moderate"]) .update-backdrop { -webkit-backdrop-filter:blur(8px) saturate(115%); backdrop-filter:blur(8px) saturate(115%); }
+:host([data-effects="minimum"]) .update-backdrop { -webkit-backdrop-filter:none; backdrop-filter:none; }
+:host([data-effects="minimum"]) .o1,
+:host([data-effects="minimum"]) .o2,
+:host([data-effects="minimum"]) .o3,
+:host([data-effects="minimum"]) .update-window:before { display:none; }
+:host([data-effects="minimum"]) *,
+:host([data-effects="minimum"]) *::before,
+:host([data-effects="minimum"]) *::after {
+  animation:none!important;
+  transition-duration:.01ms!important;
+  filter:none!important;
+  backdrop-filter:none!important;
+  -webkit-backdrop-filter:none!important;
+}
+:host(.app-suspended) *,
+:host(.app-suspended) *::before,
+:host(.app-suspended) *::after { animation-play-state:paused!important; }
 * { box-sizing: border-box; }
 button { font:inherit; border:0; color:inherit; cursor:pointer; }
-.update-backdrop { position:fixed; inset:0; display:grid; place-items:center; padding:16px; background:rgba(7,6,10,.48); -webkit-backdrop-filter:blur(15px) saturate(115%); backdrop-filter:blur(15px) saturate(115%); animation:fade-in .18s ease-out; }
+.update-backdrop { position:fixed; inset:0; display:grid; place-items:center; padding:16px; background:rgba(7,6,10,.48); -webkit-backdrop-filter:blur(14px) saturate(115%); backdrop-filter:blur(14px) saturate(115%); animation:fade-in .18s ease-out; }
 .update-window { position:relative; width:min(520px,100%); height:min(690px,calc(100vh - 32px)); display:flex; flex-direction:column; overflow:hidden; border:1px solid rgba(var(--a-rgb),.28); border-radius:20px; outline:none; background:linear-gradient(145deg,rgba(28,24,37,.99),rgba(13,11,18,.99)); box-shadow:0 24px 90px rgba(0,0,0,.62),inset 0 1px 0 rgba(255,255,255,.08); animation:panel-in .2s cubic-bezier(.2,.8,.2,1); }
 .update-window:before { content:""; position:absolute; inset:-45% 15% auto -25%; width:380px; height:260px; border-radius:50%; background:rgba(var(--a-rgb),.13); filter:blur(70px); pointer-events:none; }
 .update-top { position:relative; z-index:2; display:flex; align-items:center; gap:11px; min-height:64px; padding:11px 13px; border-bottom:1px solid var(--line); }
@@ -25,9 +43,9 @@ button { font:inherit; border:0; color:inherit; cursor:pointer; }
 .close-btn { margin-left:auto; width:32px; height:32px; border-radius:10px; background:rgba(255,255,255,.045); color:#c7c2d1; font-size:22px; line-height:1; transition:.16s ease; }
 .close-btn:hover { background:rgba(255,255,255,.09); color:#fff; }
 .update-hero { position:relative; z-index:1; display:flex; flex-direction:column; align-items:center; gap:12px; padding:20px 18px 14px; overflow:hidden; text-align:center; }
-.orb { position:absolute; border-radius:50%; filter:blur(28px); pointer-events:none; z-index:0; }
-.o1 { width:130px; height:130px; right:-10px; top:-46px; background:rgba(var(--a-rgb),.28); animation:drift 7s ease-in-out infinite alternate; }
-.o2 { width:90px; height:90px; right:80px; bottom:-52px; background:rgba(var(--al-rgb),.16); animation:drift 9s ease-in-out infinite alternate-reverse; }
+.orb { position:absolute; border-radius:50%; filter:none; pointer-events:none; z-index:0; }
+.o1 { width:130px; height:130px; right:-10px; top:-46px; background:radial-gradient(circle,rgba(var(--a-rgb),.34),transparent 72%); animation:drift 7s ease-in-out infinite alternate; }
+.o2 { width:90px; height:90px; right:80px; bottom:-52px; background:radial-gradient(circle,rgba(var(--al-rgb),.2),transparent 72%); animation:drift 9s ease-in-out infinite alternate-reverse; }
 .hero-icon,.hero-copy { position:relative; z-index:1; }
 .hero-icon { flex:0 0 54px; width:54px; height:54px; display:grid; place-items:center; border-radius:50%; color:rgb(var(--al-rgb)); background:linear-gradient(145deg,rgba(var(--al-rgb),.25),rgba(var(--a-rgb),.12)); box-shadow:inset 0 0 0 1px rgba(var(--a-rgb),.38),0 12px 32px rgba(var(--a-rgb),.18); }
 .hero-icon svg { width:29px; height:29px; }

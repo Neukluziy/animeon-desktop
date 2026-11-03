@@ -20,6 +20,9 @@ export function initHotkeys({ native, cfg, toast, askConfirmation }) {
   ['seekForward', 'Вперёд на 10 секунд', 'Плеер', 'Перематывает видео на десять секунд вперёд.'],
   ['next', 'Следующая серия', 'Плеер', 'Переходит к следующей серии, если она есть.'],
   ['previous', 'Предыдущая серия', 'Плеер', 'Возвращает к предыдущей серии.'],
+  ['pip', 'Картинка в картинке', 'Плеер', 'Переключает видео в компактное плавающее окно.'],
+  ['speedDown', 'Снизить скорость', 'Плеер', 'Переключает скорость на один шаг вниз, до 0.5×.'],
+  ['speedUp', 'Повысить скорость', 'Плеер', 'Переключает скорость на один шаг вверх, до 2×.'],
   ['settings', 'Открыть настройки', 'Программа', 'Открывает настройки приложения.'],
   ['command', 'Быстрые команды', 'Программа', 'Открывает поиск по основным действиям.'],
   ['reload', 'Перезагрузить страницу', 'Программа', 'Заново загружает текущую страницу.'],
@@ -38,7 +41,8 @@ const DEFAULT_HOTKEYS = {
   volumeUp: 'Control+Alt+Up', volumeDown: 'Control+Alt+Down', mute: 'Control+Alt+M', seekBack: 'Control+Alt+Left',
   seekForward: 'Control+Alt+Right', next: 'Control+Alt+PageDown', previous: 'Control+Alt+PageUp',
   fullscreen: 'Control+Alt+F', alwaysOnTop: 'Control+Alt+O', settings: 'Control+Alt+S', reload: 'Control+Alt+R',
-  screenshot: 'Control+Alt+Shift+S', command: 'Control+Alt+K', home: 'Control+Alt+H', back: 'Control+Alt+J', forward: 'Control+Alt+L', zoomIn: 'Control+Alt+=', zoomOut: 'Control+Alt+-', zoomReset: 'Control+Alt+0', switchSite: 'Control+Alt+W', openBrowser: 'Control+Alt+B'
+  screenshot: 'Control+Alt+Shift+S', command: 'Control+Alt+K', home: 'Control+Alt+H', back: 'Control+Alt+J', forward: 'Control+Alt+L', zoomIn: 'Control+Alt+=', zoomOut: 'Control+Alt+-', zoomReset: 'Control+Alt+0', switchSite: 'Control+Alt+W', openBrowser: 'Control+Alt+B',
+  pip: 'Control+Alt+Shift+P', speedDown: 'Control+Alt+Shift+Down', speedUp: 'Control+Alt+Shift+Up'
 };
 const HOTKEY_LABELS = { Control: 'Ctrl', Command: 'Win', Super: 'Win', Alt: 'Alt', Shift: 'Shift', Up: '↑', Down: '↓', Left: '←', Right: '→', PageUp: 'PgUp', PageDown: 'PgDn', Space: 'Space' };
 let hotkeyDraft = { ...DEFAULT_HOTKEYS, ...(cfg.hotkeys || {}) };

@@ -1,4 +1,5 @@
 const crypto = require('node:crypto');
+const { writeFileAtomically } = require('./persistence');
 
 function createWatchNote(state, text, now = new Date()) {
   const note = String(text || '').trim().slice(0, 1000);
@@ -8,7 +9,7 @@ function createWatchNote(state, text, now = new Date()) {
   try {
     const parsed = new URL(url);
     if (/^https?:$/.test(parsed.protocol) && /(^|\.)animeon\.(cc|co|gg)$/i.test(parsed.hostname)) safeUrl = parsed.href;
-  } catch {}
+  } catch { void 0; }
   return {
     id: crypto.randomUUID(),
     title: String(state?.animeTitle || state?.title || 'AnimeOn').trim().slice(0, 180),
@@ -30,7 +31,6 @@ function createWatchLibrary({
   screenshotsDir,
   getWindow,
   getSiteContents,
-  getMediaState,
   config,
   saveConfig,
   isTrustedAppEvent,
@@ -40,16 +40,16 @@ function createWatchLibrary({
   getLatestMediaState,
 }) {
   function ensureScreenshotsDir() {
-    try { fs.mkdirSync(screenshotsDir, { recursive: true }); } catch {}
+    return fs.promises.mkdir(screenshotsDir, { recursive: true });
   }
 
-  function isInScreenshotsDir(value) {
+  async function isInScreenshotsDir(value) {
     try {
       const resolved = path.resolve(String(value || ''));
       const relative = path.relative(screenshotsDir, resolved);
       if (relative === '' || relative.startsWith('..') || path.isAbsolute(relative)) return false;
-      const realRoot = fs.realpathSync(screenshotsDir);
-      const realPath = fs.realpathSync(resolved);
+      const realRoot = await fs.promises.realpath(screenshotsDir);
+      const realPath = await fs.promises.realpath(resolved);
       const realRelative = path.relative(realRoot, realPath);
       return realRelative !== '' && !realRelative.startsWith('..') && !path.isAbsolute(realRelative);
     } catch {
@@ -65,16 +65,18 @@ function createWatchLibrary({
   function takeScreenshot() {
     const win = getWindow();
     if (!win || win.isDestroyed()) return;
-    ensureScreenshotsDir();
     (async () => {
       try {
+        await ensureScreenshotsDir();
         const image = await win.capturePage();
         const siteContents = getSiteContents();
         const url = String(siteContents?.getURL?.() || '');
         let title = 'AnimeOn';
-        try { title = await siteContents?.executeJavaScript('document.title||"AnimeOn"', false) || title; } catch {}
+        try { title = await siteContents?.executeJavaScript('document.title||"AnimeOn"', false) || title; } catch (error) {
+          writeLog('debug', 'Could not read the page title for a screenshot', { error: String(error?.message || error) });
+        }
         const filePath = path.join(screenshotsDir, `${sanitizeName(pageLabel(url, title))}-${formatTimestamp()}.png`);
-        fs.writeFileSync(filePath, image.toPNG());
+        await writeFileAtomically(filePath, image.toPNG(), { mode: 0o600 });
         win.webContents.send('toast', { message: `Скриншот сохранён: ${path.basename(filePath)}` });
         win.webContents.send('screenshots:changed');
       } catch (error) {
@@ -110,17 +112,14 @@ function createWatchLibrary({
     ipcMain.on('app:screenshot', takeScreenshot);
     ipcMain.handle('screenshots:list', async () => {
       try {
-        ensureScreenshotsDir();
-        const items = fs.readdirSync(screenshotsDir)
-          .filter((file) => /\.png$/i.test(file))
-          .map((file) => {
-            const fullPath = path.join(screenshotsDir, file);
-            let stat;
-            try { stat = fs.statSync(fullPath); } catch { return null; }
-            return { name: file, path: fullPath, mtimeMs: stat.mtimeMs, size: stat.size };
-          })
-          .filter(Boolean)
-          .sort((a, b) => b.mtimeMs - a.mtimeMs);
+        await ensureScreenshotsDir();
+        const files = (await fs.promises.readdir(screenshotsDir)).filter((file) => /\.png$/i.test(file));
+        const items = await Promise.all(files.map(async (file) => {
+          const fullPath = path.join(screenshotsDir, file);
+          const stat = await fs.promises.stat(fullPath);
+          return { name: file, path: fullPath, mtimeMs: stat.mtimeMs, size: stat.size };
+        }));
+        items.sort((a, b) => b.mtimeMs - a.mtimeMs);
         return { ok: true, dir: screenshotsDir, items };
       } catch (error) {
         return { ok: false, error: String(error && error.message || error) };
@@ -128,7 +127,7 @@ function createWatchLibrary({
     });
     ipcMain.handle('screenshots:thumb', async (_, filePath) => {
       try {
-        if (!isInScreenshotsDir(filePath)) throw new Error('bad path');
+        if (!await isInScreenshotsDir(filePath)) throw new Error('bad path');
         const image = nativeImage.createFromPath(filePath);
         if (image.isEmpty()) throw new Error('empty image');
         const size = image.getSize();
@@ -141,7 +140,7 @@ function createWatchLibrary({
     });
     ipcMain.handle('screenshots:open', async (_, filePath) => {
       try {
-        if (!isInScreenshotsDir(filePath)) throw new Error('bad path');
+        if (!await isInScreenshotsDir(filePath)) throw new Error('bad path');
         const error = await shell.openPath(filePath);
         if (error) throw new Error(error);
         return { ok: true };
@@ -151,7 +150,7 @@ function createWatchLibrary({
     });
     ipcMain.handle('screenshots:show', async (_, filePath) => {
       try {
-        if (!isInScreenshotsDir(filePath)) throw new Error('bad path');
+        if (!await isInScreenshotsDir(filePath)) throw new Error('bad path');
         shell.showItemInFolder(filePath);
         return { ok: true };
       } catch (error) {
@@ -160,7 +159,7 @@ function createWatchLibrary({
     });
     ipcMain.handle('screenshots:copy', async (_, filePath) => {
       try {
-        if (!isInScreenshotsDir(filePath)) throw new Error('bad path');
+        if (!await isInScreenshotsDir(filePath)) throw new Error('bad path');
         const image = nativeImage.createFromPath(filePath);
         if (image.isEmpty()) throw new Error('empty image');
         clipboard.writeImage(image);
@@ -171,16 +170,21 @@ function createWatchLibrary({
     });
     ipcMain.handle('screenshots:delete', async (_, filePath) => {
       try {
-        if (!isInScreenshotsDir(filePath)) throw new Error('bad path');
-        fs.unlinkSync(filePath);
+        if (!await isInScreenshotsDir(filePath)) throw new Error('bad path');
+        await fs.promises.unlink(filePath);
         return { ok: true };
       } catch (error) {
         return { ok: false, error: String(error && error.message || error) };
       }
     });
-    ipcMain.on('screenshots:open-folder', () => {
-      ensureScreenshotsDir();
-      shell.openPath(screenshotsDir).catch(() => {});
+    ipcMain.on('screenshots:open-folder', (event) => {
+      if (!isTrustedAppEvent(event)) return;
+      ensureScreenshotsDir()
+        .then(() => shell.openPath(screenshotsDir))
+        .then((error) => {
+          if (error) throw new Error(error);
+        })
+        .catch((error) => writeLog('error', 'Failed to open screenshots folder', { error: String(error?.message || error) }));
     });
   }
 

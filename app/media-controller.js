@@ -11,26 +11,63 @@ function parseEpisodeLabel(value) {
   return { season, episode };
 }
 
+const PLAYBACK_SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
+const {
+  MAX_PLAYBACK_POSITION_ENTRIES,
+  MEDIA_STATE_POLL_INTERVAL_MS,
+  PLAYBACK_POSITION_SAVE_INTERVAL_MS,
+} = require('../shared/constants');
+
+function getSteppedPlaybackSpeed(currentSpeed, direction) {
+  const current = Number(currentSpeed) || 1;
+  const index = PLAYBACK_SPEEDS.indexOf(current);
+  const nearestIndex = index >= 0
+    ? index
+    : current < PLAYBACK_SPEEDS[0]
+      ? -1
+      : PLAYBACK_SPEEDS.reduce((best, speed, candidate) =>
+        Math.abs(speed - current) < Math.abs(PLAYBACK_SPEEDS[best] - current) ? candidate : best, 0);
+  const step = Number(direction) < 0 ? -1 : 1;
+  return PLAYBACK_SPEEDS[Math.max(0, Math.min(PLAYBACK_SPEEDS.length - 1, nearestIndex + step))];
+}
+
+function shouldPersistPlaybackPosition(lastSavedAt, now, force = false) {
+  return force || now - lastSavedAt >= PLAYBACK_POSITION_SAVE_INTERVAL_MS;
+}
+
 function createMediaController({
   ipcMain,
   config,
   saveConfig,
   getWindow,
   getSiteContents,
-  getTray,
+  setTrayPlaybackState = () => {},
   getLatestMediaState,
   setLatestMediaState,
   isTrustedAppEvent,
   updateMediaSession,
   updateThumbar,
   updateDiscordActivity,
-  platform = process.platform,
+  writeLog,
 }) {
   let volumeState = { volume: 100, muted: false };
   let mediaPollTimer = null;
   let lastResumeUrl = '';
-  let lastPlaybackPersist = 0;
+  let lastPlaybackPersist = Date.now();
+  let lastPlaybackUrl = '';
+  let lastPlaybackIdentity = '';
+  let playbackPositionDirty = false;
+  let lastSentMediaState = '';
+  let pollInFlight = false;
   let lastAutoNextUrl = '';
+  let lastTrayPlaybackState = '';
+
+  function updateTrayPlayback(state) {
+    const serialized = JSON.stringify(state);
+    if (serialized === lastTrayPlaybackState) return;
+    lastTrayPlaybackState = serialized;
+    setTrayPlaybackState(state);
+  }
 
   function getGuestFrames() {
     const guest = getSiteContents();
@@ -122,6 +159,10 @@ function createMediaController({
     config.playbackSpeed = speed;
     saveConfig();
     return executeGuest(`(() => { const videos = Array.from(document.querySelectorAll('video')); for (const video of videos) video.playbackRate = ${speed}; return videos.length > 0; })()`).then(() => speed);
+  }
+
+  function stepPlaybackSpeed(direction) {
+    return setPlaybackSpeed(getSteppedPlaybackSpeed(config.playbackSpeed, direction));
   }
 
   async function getSelectedDubbingFromFrames() {
@@ -221,7 +262,7 @@ function createMediaController({
             return null;
           };
           for (const script of document.querySelectorAll('script[type="application/ld+json"]')) {
-            try { const found = visit(JSON.parse(script.textContent || '')); if (found) return found; } catch {}
+            try { const found = visit(JSON.parse(script.textContent || '')); if (found) return found; } catch { void 0; }
           }
           return null;
         })();
@@ -309,9 +350,14 @@ function createMediaController({
         animeUrl: titlePage.animeUrl || metadataPage.animeUrl || videoPage.animeUrl || '',
         watchUrl: titlePage.watchUrl || metadataPage.watchUrl || videoPage.watchUrl || '',
       };
-    } catch {}
+    } catch (error) {
+      writeLog('debug', 'Could not read playback page metadata', { error: String(error?.message || error) });
+    }
 
-    const frameDubbing = await getSelectedDubbingFromFrames().catch(() => '');
+    const frameDubbing = await getSelectedDubbingFromFrames().catch((error) => {
+      writeLog('debug', 'Could not read selected dubbing from guest frames', { error: String(error?.message || error) });
+      return '';
+    });
     return {
       ...media,
       ...page,
@@ -321,49 +367,94 @@ function createMediaController({
     };
   }
 
-  async function pollMediaState() {
+  function flushPlaybackPositions() {
+    if (!playbackPositionDirty) return;
+    const entries = Object.entries(config.playbackPositions || {});
+    if (entries.length > MAX_PLAYBACK_POSITION_ENTRIES) {
+      entries.sort((left, right) => String(right[1]?.updatedAt || '').localeCompare(String(left[1]?.updatedAt || '')));
+      config.playbackPositions = Object.fromEntries(entries.slice(0, MAX_PLAYBACK_POSITION_ENTRIES));
+    }
+    playbackPositionDirty = false;
+    lastPlaybackPersist = Date.now();
+    saveConfig();
+  }
+
+  function updatePlaybackPosition(url, state, force = false) {
+    if (!url || !/^https:\/\/(?:www\.)?animeon\.(?:cc|co)\//i.test(url) || !state || state.duration <= 0 || state.currentTime < 0) return;
+    config.playbackPositions[url] = {
+      time: Math.round(state.currentTime * 10) / 10,
+      duration: Math.round(state.duration * 10) / 10,
+      title: String(state.title || '').slice(0, 180),
+      updatedAt: new Date().toISOString(),
+    };
+    playbackPositionDirty = true;
+    if (shouldPersistPlaybackPosition(lastPlaybackPersist, Date.now(), force)) flushPlaybackPositions();
+  }
+
+  async function pollMediaState(force = false) {
     const win = getWindow();
     const siteContents = getSiteContents();
-    if (!win || win.isDestroyed() || !siteContents || siteContents.isDestroyed()) return;
+    if (pollInFlight || !win || win.isDestroyed() || !siteContents || siteContents.isDestroyed()) return;
+    if (!force && (!win.isVisible() || win.isMinimized()) && getLatestMediaState()?.paused) return;
+    pollInFlight = true;
     try {
       const state = await getMediaState();
       const url = String(siteContents.getURL?.() || '');
+      if (lastPlaybackUrl && url !== lastPlaybackUrl) flushPlaybackPositions();
+      lastPlaybackUrl = url;
       if (!state) {
-        win.webContents.send('media-state', { available: false, url });
+        const unavailable = { available: false, url };
+        const serializedUnavailable = JSON.stringify(unavailable);
+        if (serializedUnavailable !== lastSentMediaState) {
+          win.webContents.send('media-state', unavailable);
+          lastSentMediaState = serializedUnavailable;
+        }
         updateThumbar({ available: false });
         setLatestMediaState(null);
-        updateDiscordActivity();
+        updateTrayPlayback({ playing: false, title: '' });
         return;
       }
       const payload = { available: true, url, ...state };
-      win.webContents.send('media-state', payload);
-      updateMediaSession(payload);
-      updateThumbar(payload);
+      const playbackIdentity = [url, state.animeTitle || '', state.season || '', state.episode || ''].join('|');
+      if (lastPlaybackIdentity && playbackIdentity !== lastPlaybackIdentity) flushPlaybackPositions();
+      lastPlaybackIdentity = playbackIdentity;
+      const serializedPayload = JSON.stringify(payload);
+      if (serializedPayload !== lastSentMediaState) {
+        win.webContents.send('media-state', payload);
+        lastSentMediaState = serializedPayload;
+        updateMediaSession(payload);
+        updateThumbar(payload);
+        updateDiscordActivity();
+      }
       setLatestMediaState(payload);
-      updateDiscordActivity();
-      const tray = getTray();
-      if (platform === 'win32' && tray) tray.setToolTip(payload.title ? `AnimeOn — ${String(payload.title).slice(0, 70)}` : 'AnimeOn');
+      updateTrayPlayback({ playing: !state.paused && !state.ended, title: payload.title || '' });
       if (config.autoNext && state.ended && url && url !== lastAutoNextUrl) {
         lastAutoNextUrl = url;
         setTimeout(() => mediaAction('next'), 350);
       }
       if (!state.ended && url !== lastAutoNextUrl) lastAutoNextUrl = '';
-      if (url && /^https:\/\/(?:www\\.)?animeon\\.(?:cc|co)\\//i.test(url) && state.duration > 0 && state.currentTime >= 0) {
-        const now = Date.now();
-        if (now - lastPlaybackPersist >= 5000) {
-          lastPlaybackPersist = now;
-          config.playbackPositions[url] = { time: Math.round(state.currentTime * 10) / 10, duration: Math.round(state.duration * 10) / 10, title: String(state.title || '').slice(0, 180), updatedAt: new Date().toISOString() };
-          const entries = Object.entries(config.playbackPositions).sort((a,b) => String(b[1]?.updatedAt || '').localeCompare(String(a[1]?.updatedAt || ''))).slice(0, 300);
-          config.playbackPositions = Object.fromEntries(entries);
-          saveConfig();
-        }
+      if (url && /^https:\/\/(?:www\.)?animeon\.(?:cc|co)\//i.test(url) && state.duration > 0 && state.currentTime >= 0) {
+        updatePlaybackPosition(url, payload, state.paused || state.ended);
       }
-    } catch {}
+    } catch (error) {
+      console.error('[AnimeOn] Failed to poll media state:', error);
+    }
+    finally { pollInFlight = false; }
   }
 
   function startMediaPolling() {
     if (mediaPollTimer) clearInterval(mediaPollTimer);
-    mediaPollTimer = setInterval(() => pollMediaState(), 1000);
+    mediaPollTimer = setInterval(() => pollMediaState(), MEDIA_STATE_POLL_INTERVAL_MS);
+  }
+
+  function handleSiteMediaState(contents, state) {
+    if (!state || typeof state.playing !== 'boolean' || typeof state.audible !== 'boolean' || typeof state.complete !== 'boolean') return;
+    try {
+      contents.setBackgroundThrottling(!state.playing && state.complete && (config.memorySaver || config.performance !== 'performance'));
+    } catch (error) {
+      console.error('[AnimeOn] Could not update background throttling for media tab:', error);
+    }
+    if (contents === getSiteContents()) void pollMediaState(true);
   }
 
   function togglePictureInPicture() {
@@ -405,7 +496,14 @@ function createMediaController({
       const nodes = Array.from(document.querySelectorAll('button,a,[role="button"],option'));
       const el = nodes.find(node => normalize(node.innerText || node.textContent || node.getAttribute('aria-label') || node.title).includes(needle));
       if (!el) return { ok:false, reason:'not-found', kind, value:target };
-      try { el.click(); } catch {}
+      if (el.tagName === 'OPTION') {
+        const select = el.closest('select');
+        if (!select) return { ok:false, reason:'not-found', kind, value:target };
+        select.value = el.value;
+        select.dispatchEvent(new Event('change', { bubbles:true }));
+      } else {
+        el.click();
+      }
       return { ok:true, kind, value:target };
     })()`, true);
     return result || { ok: false, reason: 'not-found' };
@@ -433,19 +531,6 @@ function createMediaController({
     return { ok: dubbing.ok || quality.ok || source.ok, options, selected: { dubbing, quality, source } };
   }
 
-  async function smartFallback(preferences = {}) {
-    const attempts = [];
-    const sourcePrefs = Array.isArray(preferences.source) ? preferences.source : [];
-    const options = await inspectPlaybackOptions();
-    const candidates = [...sourcePrefs, ...options.sources].filter(Boolean);
-    for (const candidate of [...new Set(candidates)]) {
-      const result = await selectPlaybackOption('source', candidate);
-      attempts.push({ candidate, ok: !!result?.ok });
-      if (result?.ok) return { ok:true, selected:candidate, attempts, options };
-    }
-    return { ok:false, attempts, options };
-  }
-
   function seekVideo(seconds) {
     return executeGuest(`(() => { const v = Array.from(document.querySelectorAll('video')); if (!v.length) return false; const active = v.find(x => !x.paused && !x.ended) || v[0]; active.currentTime = Math.max(0, Math.min(Number.isFinite(active.duration) ? active.duration : active.currentTime + ${Number(seconds)}, active.currentTime + ${Number(seconds)})); return true; })()`);
   }
@@ -460,13 +545,18 @@ function createMediaController({
           const active = videos.find(v => !v.paused && !v.ended) || videos[0];
           if (active.paused || active.ended) {
             const p = active.play();
-            if (p?.catch) p.catch(() => {});
+            if (p?.catch) p.catch(() => {
+            });
           } else {
             active.pause();
           }
           return true;
-        })()`, false).catch(() => {});
-    } catch {}
+        })()`, false).catch((error) => {
+          writeLog('debug', 'Could not execute playback toggle in the site', { error: String(error?.message || error) });
+        });
+    } catch (error) {
+      writeLog('debug', 'Could not start playback toggle in the site', { error: String(error?.message || error) });
+    }
   }
 
   function mediaAction(action) {
@@ -492,7 +582,6 @@ function createMediaController({
     ipcMain.handle('media:options', async () => { try { return await inspectPlaybackOptions(); } catch (e) { return { quality:[], dubbing:[], sources:[], error:String(e?.message || e) }; } });
     ipcMain.handle('media:select-option', async (_, kind, value) => { try { return await selectPlaybackOption(kind, value); } catch (e) { return { ok:false, reason:String(e?.message || e) }; } });
     ipcMain.handle('media:smart-select', async (_, preferences) => { try { return await smartSelectPlayback(preferences || {}); } catch (e) { return { ok:false, error:String(e?.message || e) }; } });
-    ipcMain.handle('media:fallback', async (_, preferences) => { try { return await smartFallback(preferences || {}); } catch (e) { return { ok:false, error:String(e?.message || e) }; } });
     ipcMain.on('media:mute', () => setMuted(null).then(v => { const win = getWindow(); if (v && win && !win.isDestroyed()) win.webContents.send('media-overlay', { type: 'volume', value: v.volume, muted: v.muted }); }));
     ipcMain.on('media:seek', (_, seconds) => { const n = Number(seconds) || 0; seekVideo(n).then(ok => { const win = getWindow(); if (ok && win && !win.isDestroyed()) win.webContents.send('media-overlay', { type: 'seek', value: n }); }); });
     ipcMain.on('media:action', (_, action) => mediaAction(action));
@@ -503,6 +592,7 @@ function createMediaController({
     applyVolumeToGuest,
     getLatestMediaState,
     getMediaState,
+    handleSiteMediaState,
     mediaAction,
     registerIpc,
     seekVideo,
@@ -510,8 +600,16 @@ function createMediaController({
     setPlaybackSpeed,
     setVolume,
     startMediaPolling,
+    stepPlaybackSpeed,
+    togglePictureInPicture,
     togglePlayback,
+    flushPlaybackPositions,
   };
 }
 
-module.exports = { createMediaController, parseEpisodeLabel };
+module.exports = {
+  createMediaController,
+  getSteppedPlaybackSpeed,
+  parseEpisodeLabel,
+  shouldPersistPlaybackPosition,
+};

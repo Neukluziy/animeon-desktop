@@ -3,8 +3,9 @@ const net = require('node:net');
 const CLIENT_ID = '1543998755139879082';
 
 class DiscordRPC {
-  constructor(clientId) {
+  constructor(clientId, writeLog = () => {}) {
     this.clientId = clientId || CLIENT_ID;
+    this.writeLog = writeLog;
     this.socket = null;
     this.connected = false;
     this.ready = false;
@@ -42,10 +43,21 @@ class DiscordRPC {
         else resolve(this._tryConnect(pipes, index + 1));
       };
 
-      const timeout = setTimeout(() => { try { sock.destroy(); } catch {} done(false); }, 3000);
+      const timeout = setTimeout(() => {
+        try { sock.destroy(); } catch (error) {
+          this.writeLog('debug', 'Could not close timed-out Discord IPC socket', { error: String(error?.message || error) });
+        }
+        done(false);
+      }, 3000);
 
       const sock = net.connect(pipePath, () => {
-        if (!this.enabled) { try { sock.destroy(); } catch {} done(false); return; }
+        if (!this.enabled) {
+          try { sock.destroy(); } catch (error) {
+            this.writeLog('debug', 'Could not close disabled Discord IPC socket', { error: String(error?.message || error) });
+          }
+          done(false);
+          return;
+        }
         this.socket = sock;
         this._buffer = Buffer.alloc(0);
         this._bindSocket();
@@ -54,8 +66,11 @@ class DiscordRPC {
         done(true);
       });
 
-      sock.on('error', () => {
-        try { sock.destroy(); } catch {}
+      sock.on('error', (error) => {
+        this.writeLog('debug', 'Discord IPC socket is unavailable', { error: String(error?.message || error) });
+        try { sock.destroy(); } catch (closeError) {
+          this.writeLog('debug', 'Could not close failed Discord IPC socket', { error: String(closeError?.message || closeError) });
+        }
         done(false);
       });
     });
@@ -82,7 +97,9 @@ class DiscordRPC {
       this._scheduleReconnect();
     });
 
-    this.socket.on('error', () => {});
+    this.socket.on('error', (error) => {
+      this.writeLog('debug', 'Discord IPC connection error', { error: String(error?.message || error) });
+    });
   }
 
   _onMessage(op, data) {
@@ -99,7 +116,9 @@ class DiscordRPC {
           this._pending.get(msg.nonce)(msg);
           this._pending.delete(msg.nonce);
         }
-      } catch {}
+      } catch (error) {
+        this.writeLog('warn', 'Could not parse Discord IPC message', { error: String(error?.message || error) });
+      }
     } else if (op === 3) {
       this._rawSend(3, str);
     }
@@ -114,7 +133,8 @@ class DiscordRPC {
     try {
       this.socket.write(Buffer.concat([header, buf]));
       return true;
-    } catch {
+    } catch (error) {
+      this.writeLog('warn', 'Could not write to Discord IPC socket', { error: String(error?.message || error) });
       return false;
     }
   }
@@ -172,8 +192,12 @@ class DiscordRPC {
     if (this._reconnectTimer) clearTimeout(this._reconnectTimer);
     this._reconnectTimer = null;
     if (this.socket) {
-      try { this._rawSend(2, '{}'); } catch {}
-      try { this.socket.destroy(); } catch {}
+      try { this._rawSend(2, '{}'); } catch (error) {
+        this.writeLog('debug', 'Could not send Discord IPC disconnect frame', { error: String(error?.message || error) });
+      }
+      try { this.socket.destroy(); } catch (error) {
+        this.writeLog('debug', 'Could not close Discord IPC socket', { error: String(error?.message || error) });
+      }
     }
     this.connected = false;
     this.ready = false;
@@ -183,7 +207,9 @@ class DiscordRPC {
   _scheduleReconnect() {
     if (!this.enabled) return;
     if (this._reconnectTimer) clearTimeout(this._reconnectTimer);
-    this._reconnectTimer = setTimeout(() => this.connect().catch(() => {}), 15000);
+    this._reconnectTimer = setTimeout(() => this.connect().catch((error) => {
+      this.writeLog('debug', 'Could not reconnect to Discord IPC', { error: String(error?.message || error) });
+    }), 15000);
   }
 }
 

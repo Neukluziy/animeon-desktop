@@ -1,3 +1,5 @@
+const { TextDecoder } = require('node:util');
+
 function createNetworkManager({
   app,
   session,
@@ -9,16 +11,50 @@ function createNetworkManager({
   writeLog,
   apiHealth,
   getWindow,
+  sitePattern,
+  isPlaybackActive = () => false,
 }) {
   let lastMirrorHealthCheck = 0;
   let mirrorHealthTimer = null;
+  const maxMirrorListBytes = 64 * 1024;
+
+  async function readLimitedText(response) {
+    const headerLength = Number(response.headers.get('content-length'));
+    if (Number.isFinite(headerLength) && headerLength > maxMirrorListBytes) {
+      throw new Error('Список зеркал превышает допустимый размер');
+    }
+    if (!response.body) throw new Error('Пустой ответ со списком зеркал');
+
+    const reader = response.body.getReader();
+    const chunks = [];
+    let size = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > maxMirrorListBytes) {
+        await reader.cancel();
+        throw new Error('Список зеркал превышает допустимый размер');
+      }
+      chunks.push(value);
+    }
+    const buffer = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) {
+      buffer.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return new TextDecoder().decode(buffer);
+  }
 
   async function applyNetworkSettings(targetSessions) {
     const proxy = config.network || { mode: 'system', host: '', port: 0, user: '', pass: '', doh: false };
     const sessions = new Set(targetSessions || [session.defaultSession]);
     if (!targetSessions) {
       for (const account of config.accounts || []) {
-        try { sessions.add(session.fromPartition(accountPartition(account.id))); } catch {}
+        try { sessions.add(session.fromPartition(accountPartition(account.id))); } catch (error) {
+          writeLog('warn', 'Could not initialize a network session', { accountId: account.id, error: String(error?.message || error) });
+        }
       }
     }
     const endpoint = proxy.mode === 'custom' ? parseProxyEndpoint(`${proxy.host || ''}:${proxy.port || ''}`) : null;
@@ -33,17 +69,23 @@ function createNetworkManager({
     }));
     try {
       if (proxy.doh) app.configureHostResolver({ secureDnsMode: 'secure', secureDnsServers: ['https://cloudflare-dns.com/dns-query', 'https://dns.google/dns-query'] });
-    } catch {}
+    } catch (error) {
+      writeLog('warn', 'Could not configure secure DNS', { error: String(error?.message || error) });
+    }
   }
 
   function startMirrorHealthCheck() {
     if (mirrorHealthTimer) clearInterval(mirrorHealthTimer);
     mirrorHealthTimer = setInterval(() => {
       const win = getWindow();
-      if (!win || win.isDestroyed()) return;
-      probeMirrors().catch(() => {});
+      if (!win || win.isDestroyed() || isPlaybackActive()) return;
+      probeMirrors().catch((error) => {
+        writeLog('warn', 'Mirror health check failed', { error: String(error?.message || error) });
+      });
     }, 60000);
-    probeMirrors().catch(() => {});
+    probeMirrors().catch((error) => {
+      writeLog('warn', 'Initial mirror health check failed', { error: String(error?.message || error) });
+    });
   }
 
   async function probeMirrors() {
@@ -52,7 +94,7 @@ function createNetworkManager({
       const url = site.url;
       const started = Date.now();
       try {
-        const res = await fetch(url, { method: 'HEAD', redirect: 'follow', signal: AbortSignal.timeout(8000), headers: { 'User-Agent': 'AnimeOn-Desktop' } });
+        const res = await fetch(url, { method: 'HEAD', redirect: 'follow', signal: globalThis.AbortSignal.timeout(8000), headers: { 'User-Agent': 'AnimeOn-Desktop' } });
         return { id: site.id, url, label: site.label, ok: res.ok || res.status < 500, status: res.status, ms: Date.now() - started };
       } catch (error) {
         return { id: site.id, url, label: site.label, ok: false, status: 0, ms: Date.now() - started, error: String(error?.message || error) };
@@ -67,26 +109,45 @@ function createNetworkManager({
   function registerIpc() {
     ipcMain.handle('sites:fetch', async () => {
       try {
-        const source = `https://raw.githubusercontent.com/Neukluziy/testip/refs/heads/main/ip.txt?v=${Date.now()}`;
+        const source = 'https://raw.githubusercontent.com/Neukluziy/testip/refs/heads/main/ip.txt';
         const res = await fetch(source, {
           cache: 'no-store',
           headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
-          signal: AbortSignal.timeout(10000),
+          signal: globalThis.AbortSignal.timeout(10000),
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const text = await res.text();
+        const text = await readLimitedText(res);
         const lines = text.split(/\r?\n/).filter((line) => line.trim() && !line.trim().startsWith('#'));
         const sites = [];
+        let rejectedLines = 0;
         for (const line of lines) {
           const match = line.match(/^\s*([\w-]+)\s*=\s*(\S.*?)\s*$/);
-          if (!match) continue;
+          if (!match) {
+            rejectedLines += 1;
+            continue;
+          }
           const value = match[2].trim();
-          const url = new URL(/^https?:\/\//i.test(value) ? value : `https://${value}`);
-          if (!['http:', 'https:'].includes(url.protocol)) continue;
+          const candidate = /^https?:\/\//i.test(value) ? value : `https://${value}`;
+          if (!sitePattern.test(candidate)) {
+            rejectedLines += 1;
+            continue;
+          }
+          let url;
+          try {
+            url = new URL(candidate);
+          } catch {
+            rejectedLines += 1;
+            continue;
+          }
+          if (!['http:', 'https:'].includes(url.protocol) || !sitePattern.test(url.href)) {
+            rejectedLines += 1;
+            continue;
+          }
           if (!url.pathname.endsWith('/')) url.pathname += '/';
           sites.push({ id: match[1].trim(), url: url.href, label: url.hostname });
         }
-        if (sites.length < 2) throw new Error('бдыщь, не удалось получить список сайтов');
+        if (rejectedLines) writeLog('warn', 'Rejected invalid mirror list entries', { count: rejectedLines });
+        if (sites.length < 2) throw new Error('Не удалось получить проверенный список зеркал');
         config.siteList = sites.slice(0, 2);
         saveConfig();
         return { ok: true, sites: config.siteList, source, fetchedAt: new Date().toISOString() };
@@ -94,15 +155,13 @@ function createNetworkManager({
         return { ok: false, error: String(error?.message || error), sites: config.siteList || [] };
       }
     });
-    ipcMain.handle('sites:get', () => ({ ok: true, sites: config.siteList || [] }));
-
     ipcMain.handle('net:health', async () => {
       const siteList = config.siteList || [];
       const results = await Promise.all(siteList.map(async (site) => {
         const url = site.url;
         const started = Date.now();
         try {
-          const res = await fetch(url, { method: 'HEAD', redirect: 'follow', signal: AbortSignal.timeout(8000), headers: { 'User-Agent': 'AnimeOn-Desktop' } });
+          const res = await fetch(url, { method: 'HEAD', redirect: 'follow', signal: globalThis.AbortSignal.timeout(8000), headers: { 'User-Agent': 'AnimeOn-Desktop' } });
           return { id: site.id, url, label: site.label, ok: res.ok || res.status < 500, status: res.status, ms: Date.now() - started };
         } catch (error) {
           return { id: site.id, url, label: site.label, ok: false, status: 0, ms: Date.now() - started, error: String(error?.message || error) };
@@ -144,7 +203,11 @@ function createNetworkManager({
         } catch (error) {
           config.network = previousNetwork;
           config.autoMirror = previousAutoMirror;
-          try { await applyNetworkSettings(); } catch {}
+          try { await applyNetworkSettings(); } catch (rollbackError) {
+            writeLog('error', 'Could not restore the previous network settings', {
+              error: String(rollbackError?.message || rollbackError),
+            });
+          }
           return { ok: false, error: String(error?.message || 'Не удалось применить настройки сети') };
         }
         saveConfig();
@@ -172,8 +235,15 @@ function createNetworkManager({
           const finish = (value) => { if (!done) { done = true; resolve(value); } };
           try {
             const req = electronNet.request({ session: siteSession, method: 'GET', url: target, redirect: 'follow', headers: { Range: 'bytes=0-0' } });
-            const timer = setTimeout(() => { try { req.abort(); } catch {} finish({ ok: false, ms: Date.now() - started, status: 0, error: 'timeout' }); }, 10000);
-            req.on('response', (res) => { clearTimeout(timer); try { res.resume(); } catch {} finish({ ok: res.statusCode >= 200 && res.statusCode < 400, ms: Date.now() - started, status: res.statusCode }); });
+            const timer = setTimeout(() => {
+              try { req.abort(); } catch { void 0; }
+              finish({ ok: false, ms: Date.now() - started, status: 0, error: 'timeout' });
+            }, 10000);
+            req.on('response', (res) => {
+              clearTimeout(timer);
+              try { res.resume(); } catch { void 0; }
+              finish({ ok: res.statusCode >= 200 && res.statusCode < 400, ms: Date.now() - started, status: res.statusCode });
+            });
             req.on('error', (error) => { clearTimeout(timer); finish({ ok: false, ms: Date.now() - started, status: 0, error: String(error?.message || error) }); });
             req.end();
           } catch (error) { finish({ ok: false, ms: Date.now() - started, status: 0, error: String(error?.message || error) }); }
@@ -193,7 +263,7 @@ function createNetworkManager({
         const url = site.url;
         const started = Date.now();
         try {
-          const res = await fetch(url, { method: 'HEAD', redirect: 'follow', signal: AbortSignal.timeout(8000), headers: { 'User-Agent': 'AnimeOn-Desktop' } });
+          const res = await fetch(url, { method: 'HEAD', redirect: 'follow', signal: globalThis.AbortSignal.timeout(8000), headers: { 'User-Agent': 'AnimeOn-Desktop' } });
           results.push({ url, ok: res.ok || res.status < 500, status: res.status, ms: Date.now() - started });
         } catch (error) {
           results.push({ url, ok: false, status: 0, ms: Date.now() - started, error: String(error?.message || error) });

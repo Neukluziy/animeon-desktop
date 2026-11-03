@@ -69,7 +69,7 @@ export function initUpdatePanel({ native, host, template }) {
 
   async function loadUpdateInfo() {
     try {
-      const info = await native.getUpdData();
+      const info = await native.update.getData();
       renderUpdateInfo(info);
     } catch (error) {
       console.error('[AnimeOn] Не удалось загрузить данные обновления:', error);
@@ -303,11 +303,11 @@ export function initUpdatePanel({ native, host, template }) {
   }
 
   function closePanel() {
-    native.updClose();
+    native.update.close();
   }
 
-  native.onUpdOpen(openPanel);
-  native.onUpdClose(() => {
+  native.update.onOpen(openPanel);
+  native.update.onClose(() => {
     host.classList.remove('open');
     host.setAttribute('aria-hidden', 'true');
     host.hidden = true;
@@ -316,6 +316,14 @@ export function initUpdatePanel({ native, host, template }) {
 
   function formatBytes(n) { if (!Number.isFinite(Number(n)) || Number(n) <= 0) return '—'; const u=['B','KB','MB','GB']; let x=Number(n),i=0; while(x>=1024&&i<u.length-1){x/=1024;i++} return `${x.toFixed(i?1:0)} ${u[i]}`; }
   function formatSpeed(n) { return Number.isFinite(Number(n)) && Number(n)>0 ? `${formatBytes(n)}/с` : '—'; }
+  function formatRemaining(received, total, speed) {
+    const remaining = Number(total) - Number(received);
+    const seconds = Number(speed) > 0 ? Math.ceil(remaining / Number(speed)) : 0;
+    if (!Number.isFinite(seconds) || seconds <= 0 || remaining <= 0) return '';
+    if (seconds < 60) return ` · ~${seconds} с`;
+    const minutes = Math.ceil(seconds / 60);
+    return ` · ~${minutes} мин`;
+  }
   const spark = $('spark');
   const sctx = spark.getContext('2d');
   const hist = new Array(48).fill(0);
@@ -364,7 +372,7 @@ export function initUpdatePanel({ native, host, template }) {
       hist.fill(0);
       drawSpark();
     }
-    if(speedEl) speedEl.textContent=stage==='download'?formatSpeed(extra.speed):'';
+    if(speedEl) speedEl.textContent=stage==='download'?`${formatSpeed(extra.speed)}${formatRemaining(extra.received, extra.total, extra.speed)}`:'';
     if(sizeEl) sizeEl.textContent=stage==='download'?`${formatBytes(extra.received)} / ${formatBytes(extra.total)}`:'';
     if (stage === 'verify') {
       downloadControls.classList.add('hidden');
@@ -411,7 +419,7 @@ export function initUpdatePanel({ native, host, template }) {
     }
   }
 
-  native.onUpdProgress(({ pct, stage, received, total, speed } = {}) => {
+  native.update.onProgress(({ pct, stage, received, total, speed } = {}) => {
     if (stage === 'cancelled') {
       showCancelled();
       return;
@@ -423,7 +431,7 @@ export function initUpdatePanel({ native, host, template }) {
     if (downloadCard.classList.contains('state-ready')) {
       btnDownload.disabled = true;
       try {
-        const result = await native.updInstall();
+        const result = await native.update.install();
         if (!result?.ok) throw new Error(result?.error || 'Не удалось запустить установщик');
       } catch (error) {
         showActionError(String(error?.message || error));
@@ -453,7 +461,7 @@ export function initUpdatePanel({ native, host, template }) {
 
     let res;
     try {
-      res = await native.updDownload();
+      res = await native.update.download();
     } catch (error) {
       showActionError(String(error?.message || error));
       return;
@@ -466,7 +474,7 @@ export function initUpdatePanel({ native, host, template }) {
 
   btnPause.addEventListener('click', () => {
     if (!downloading) return;
-    native.setUpdPaused(!paused);
+    native.update.setPaused(!paused);
   });
 
   btnCancel.addEventListener('click', () => {
@@ -475,7 +483,7 @@ export function initUpdatePanel({ native, host, template }) {
     btnCancel.disabled = true;
     statusTitleEl.textContent = 'Отмена скачивания…';
     statusEl.textContent = 'Удаляю незавершённый файл.';
-    native.updCancel();
+    native.update.cancel();
   });
 
   btnLater.addEventListener('click', closePanel);

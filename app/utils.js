@@ -28,6 +28,24 @@ function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
+function safe(operation, logger, context, fallbackValue) {
+  try {
+    return operation();
+  } catch (error) {
+    logger('warn', context, { error: String(error?.message || error) });
+    return fallbackValue;
+  }
+}
+
+async function safeAsync(operation, logger, context, fallbackValue) {
+  try {
+    return await operation();
+  } catch (error) {
+    logger('warn', context, { error: String(error?.message || error) });
+    return fallbackValue;
+  }
+}
+
 function parseProxyEndpoint(value) {
   const match = String(value ?? '').trim().match(/^(?:\[([0-9a-f:.]+)\]|([a-z\d.-]+)):(\d{1,5})$/i);
   if (!match) return null;
@@ -70,4 +88,4 @@ function buildDiscordActivity(media = {}) {
   };
 }
 
-module.exports = { compareVersions, clamp, parseProxyEndpoint, formatPlaybackTime, buildDiscordActivity, DEFAULT_DISCORD_RPC_SETTINGS };
+module.exports = { compareVersions, clamp, safe, safeAsync, parseProxyEndpoint, formatPlaybackTime, buildDiscordActivity, DEFAULT_DISCORD_RPC_SETTINGS };

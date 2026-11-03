@@ -34,7 +34,7 @@ export function initScreenshots({ native, toast }) {
     if (!items.length) {
       const empty = document.createElement('div');
       empty.className = 'screenshots-empty';
-      empty.textContent = 'Здесь появятся ваши скриншоты';
+      empty.innerHTML = '<strong>Скриншотов пока нет</strong><span>Во время просмотра нажмите кнопку снимка в панели.</span>';
       screenshotsList.appendChild(empty);
       return;
     }

@@ -28,13 +28,15 @@ export function initSiteAppearance({ cfg, store, applyGuestStyles, toast, smooth
     return {
       radius: Number.isFinite(Number(v.radius)) ? Number(v.radius) : 18,
       opacity: Number.isFinite(Number(v.opacity)) ? Number(v.opacity) : 96,
-      blur: Number.isFinite(Number(v.blur)) ? Number(v.blur) : 0,
+      blur: Number.isFinite(Number(v.blur)) ? Math.max(0, Math.min(14, Number(v.blur))) : 0,
       scale: Number.isFinite(Number(v.scale)) ? Number(v.scale) : 100,
       density: Number.isFinite(Number(v.density)) ? Number(v.density) : 100,
       accentGlow: Number.isFinite(Number(v.accentGlow)) ? Number(v.accentGlow) : 55,
       animations: ['off', 'smooth', 'cinematic'].includes(v.animations) ? v.animations : 'smooth',
     };
   }
+  let savedVisual = { ...getVisual() };
+  let visualDirty = false;
 
   function hideScrollbarCss() {
     return cfg.showSiteScrollbars
@@ -105,8 +107,24 @@ export function initSiteAppearance({ cfg, store, applyGuestStyles, toast, smooth
   }
 
   async function applyVisualStyle(save = true) {
+    clearTimeout(visualApplyTimer);
     cfg.visual = readVisualUI();
-    if (save) store('visual', cfg.visual);
+    if (save) {
+      store('visual', cfg.visual);
+      savedVisual = { ...cfg.visual };
+      visualDirty = false;
+    } else {
+      visualDirty = true;
+    }
+    return applyGuestStyles();
+  }
+
+  async function revertVisualPreview() {
+    clearTimeout(visualApplyTimer);
+    if (!visualDirty) return;
+    cfg.visual = { ...savedVisual };
+    visualDirty = false;
+    syncVisualUI();
     await applyGuestStyles();
   }
 
@@ -117,13 +135,18 @@ export function initSiteAppearance({ cfg, store, applyGuestStyles, toast, smooth
     syncRangeFill(element);
     siteStylePresetButtons.forEach((button) => button.classList.remove('active'));
     clearTimeout(visualApplyTimer);
-    visualApplyTimer = setTimeout(() => applyVisualStyle(true), 120);
+    visualApplyTimer = setTimeout(() => applyVisualStyle(false), 80);
   }));
   syncAllRangeFills();
   visualApply?.addEventListener('click', () => applyVisualStyle(true).then(() => toast('Визуальный стиль применён')));
+  [visualRadius, visualOpacity, visualBlur, visualScale, visualDensity, visualGlow].forEach((element) => {
+    element?.addEventListener('change', () => applyVisualStyle(true));
+  });
   visualReset?.addEventListener('click', () => {
     cfg.visual = { radius: 18, opacity: 92, blur: 0, scale: 100, density: 100, accentGlow: 70, animations: 'smooth' };
     store('visual', cfg.visual);
+    savedVisual = { ...cfg.visual };
+    visualDirty = false;
     syncVisualUI();
     applyGuestStyles();
     toast('Оформление сброшено');
@@ -140,6 +163,8 @@ export function initSiteAppearance({ cfg, store, applyGuestStyles, toast, smooth
     if (!preset) return;
     cfg.visual = { ...preset };
     store('visual', cfg.visual);
+    savedVisual = { ...cfg.visual };
+    visualDirty = false;
     syncVisualUI();
     applyGuestStyles();
   }));
@@ -153,5 +178,5 @@ export function initSiteAppearance({ cfg, store, applyGuestStyles, toast, smooth
     applyGuestStyles();
   });
 
-  return { getVisual, syncVisualUI, buildCss };
+  return { getVisual, syncVisualUI, buildCss, revertVisualPreview };
 }

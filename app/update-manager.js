@@ -1,6 +1,9 @@
 const { spawn } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
+const crypto = require('node:crypto');
+const { verifySignedUpdateManifest } = require('./update-manifest');
+const { copyFileAtomically, writeFileAtomically } = require('./persistence');
 
 function createUpdateManager({
   app,
@@ -12,6 +15,8 @@ function createUpdateManager({
   getWindow,
   isTrustedAppEvent,
   saveConfig,
+  writeLog,
+  trayController,
   setQuitting,
 }) {
 const REPO_API = 'https://api.github.com/repos/Neukluziy/animeon-desktop';
@@ -25,6 +30,36 @@ function findReleaseAsset(assets) {
   return list.find((a) => /setup.*\.exe$/i.test(a.name)) || list.find((a) => /\.exe$/i.test(a.name)) || list[0] || null;
 }
 
+async function readReleaseAsset(asset, maxBytes) {
+  if (!asset?.browser_download_url) throw new Error('Release asset URL is unavailable');
+  const response = await fetch(asset.browser_download_url, {
+    headers: { 'User-Agent': 'AnimeOn-Desktop' },
+    signal: globalThis.AbortSignal.timeout(15000),
+  });
+  if (!response.ok || !response.body) throw new Error(`Could not download ${asset.name}: HTTP ${response.status}`);
+  const contentLength = Number(response.headers.get('content-length')) || 0;
+  if (contentLength > maxBytes) throw new Error(`${asset.name} exceeds the allowed size`);
+  const chunks = [];
+  let total = 0;
+  for await (const chunk of response.body) {
+    const buffer = Buffer.from(chunk);
+    total += buffer.length;
+    if (total > maxBytes) throw new Error(`${asset.name} exceeds the allowed size`);
+    chunks.push(buffer);
+  }
+  return Buffer.concat(chunks, total);
+}
+
+async function fileExists(filePath) {
+  try {
+    await fs.promises.access(filePath);
+    return true;
+  } catch (error) {
+    if (error.code === 'ENOENT') return false;
+    throw error;
+  }
+}
+
 let lastUpdate = null;
 let updateNotified = false;
 let downloadedInstaller = null;
@@ -33,7 +68,7 @@ let activeDownload = null;
 
 async function checkUpdate(silent = !!config?.silentUpdates) {
   try {
-    const res = await fetch(`${REPO_API}/releases/latest`, { headers: { 'User-Agent': 'AnimeOn-Desktop' }, signal: AbortSignal.timeout(15000) });
+    const res = await fetch(`${REPO_API}/releases/latest`, { headers: { 'User-Agent': 'AnimeOn-Desktop' }, signal: globalThis.AbortSignal.timeout(15000) });
     if (!res.ok) return { ok: false, reason: 'github ' + res.status, silent };
     const payload = await res.json();
     const history = Array.isArray(payload) ? payload : [payload];
@@ -41,6 +76,43 @@ async function checkUpdate(silent = !!config?.silentUpdates) {
     if (!release) return { ok: false, reason: 'обновлений пока нет', silent };
     const latest = normalizeVersion(release.tag_name || release.name || '');
     const asset = findReleaseAsset(release.assets || []);
+    let digest = asset?.digest || null;
+    let size = Number(asset?.size || 0);
+    const trustPath = path.join(__dirname, 'update-trust.json');
+    let trustConfig = null;
+    try {
+      trustConfig = JSON.parse(await fs.promises.readFile(trustPath, 'utf8'));
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw new Error(`Could not load update trust key: ${String(error.message || error)}`);
+    }
+    if (trustConfig) {
+      if (trustConfig.algorithm !== 'Ed25519' || typeof trustConfig.publicKey !== 'string') {
+        throw new Error('Update trust key configuration is invalid');
+      }
+      const publicKey = crypto.createPublicKey(trustConfig.publicKey);
+      if (publicKey.asymmetricKeyType !== 'ed25519') throw new Error('Update trust key must be Ed25519');
+      const assets = Array.isArray(release.assets) ? release.assets : [];
+      const manifestAsset = assets.find((item) => item?.name === 'update-manifest.json');
+      const signatureAsset = assets.find((item) => item?.name === 'update-manifest.json.sig');
+      if (!asset || !manifestAsset || !signatureAsset) {
+        throw new Error('Signed update manifest is missing from this release');
+      }
+      const [manifestBytes, signatureBytes] = await Promise.all([
+        readReleaseAsset(manifestAsset, 64 * 1024),
+        readReleaseAsset(signatureAsset, 4096),
+      ]);
+      const verifiedAsset = verifySignedUpdateManifest({
+        manifestBytes,
+        signatureText: signatureBytes.toString('utf8'),
+        publicKey,
+        version: latest,
+        assetName: asset.name,
+        assetSize: Number(asset.size || 0),
+        assetDigest: asset.digest || '',
+      });
+      digest = `sha256:${verifiedAsset.sha256}`;
+      size = verifiedAsset.size;
+    }
     const notes = String(release.body || '').replace(/\r/g, '');
     const force = /force[-\s]?update|must[-\s]?update|critical|urgent/i.test(notes);
     const info = {
@@ -50,8 +122,8 @@ async function checkUpdate(silent = !!config?.silentUpdates) {
       hasUpdate: compareVersions(latest, app.getVersion()) > 0,
       url: asset ? asset.browser_download_url : release.html_url,
       notes,
-      digest: asset?.digest || null,
-      size: Number(asset?.size || 0),
+      digest,
+      size,
       force,
       prerelease: !!release.prerelease,
       releaseName: String(release.name || release.tag_name || `v${latest}`),
@@ -73,6 +145,7 @@ async function checkUpdate(silent = !!config?.silentUpdates) {
       downloadedInstallerVersion = null;
     }
     lastUpdate = info;
+    trayController?.setUpdateAvailable(info.hasUpdate);
     if (info.hasUpdate && !updateNotified) {
       updateNotified = true;
       if (!silent) showUpdateToast();
@@ -261,16 +334,15 @@ async function downloadUpdate() {
     if (lastUpdate.digest) {
       const expected = String(lastUpdate.digest).replace(/^sha256:/i, '');
       const hash = crypto.createHash('sha256');
-      const data = fs.readFileSync(dest);
-      hash.update(data);
+      for await (const chunk of fs.createReadStream(dest)) hash.update(chunk);
       const actual = hash.digest('hex');
       verified = actual.toLowerCase() === expected.toLowerCase();
       if (!verified) {
-        fs.unlinkSync(dest);
+        await fs.promises.unlink(dest);
         return { ok: false, error: 'Контрольная сумма не совпадает — файл повреждён или подменён' };
       }
     } else if (lastUpdate.size && total && received !== total) {
-      fs.unlinkSync(dest);
+      await fs.promises.unlink(dest);
       return { ok: false, error: 'Размер файла не совпадает с ожидаемым' };
     } else {
       verified = true;
@@ -282,7 +354,9 @@ async function downloadUpdate() {
         logs.push({ type: 'update-download', message: JSON.stringify(logEntry) });
         config.errorLog = logs.slice(-200);
         saveConfig();
-      } catch {}
+      } catch (error) {
+        writeLog('warn', 'Could not record update download metadata', { error: String(error?.message || error) });
+      }
     }
     downloadedInstaller = dest;
     downloadedInstallerVersion = lastUpdate.latest;
@@ -297,9 +371,9 @@ async function downloadUpdate() {
         ws.destroy();
         await writerClosed;
       }
-      if (dest && fs.existsSync(dest)) {
+      if (dest && await fileExists(dest)) {
         try {
-          fs.unlinkSync(dest);
+          await fs.promises.unlink(dest);
         } catch (cleanupError) {
           return { ok: false, error: `Не удалось удалить незавершённый файл: ${String(cleanupError.message || cleanupError)}` };
         }
@@ -321,59 +395,72 @@ async function downloadUpdate() {
   }
 }
 
-function backupCurrentExecutable() {
-  const rollbackDir = ensureRollbackDir();
+async function backupCurrentExecutable() {
+  const rollbackDir = await ensureRollbackDir();
   const current = process.execPath;
-  if (!current || !fs.existsSync(current)) return null;
+  if (!current || !await fileExists(current)) return null;
   const backupFile = path.join(rollbackDir, `AnimeOn-${app.getVersion()}.exe`);
-  try {
-    fs.copyFileSync(current, backupFile);
-    config.rollbackVersion = app.getVersion();
-    config.lastGoodVersion = app.getVersion();
-    saveConfig();
-    return backupFile;
-  } catch {
-    return null;
-  }
+  await copyFileAtomically(current, backupFile);
+  config.rollbackVersion = app.getVersion();
+  config.lastGoodVersion = app.getVersion();
+  saveConfig();
+  return backupFile;
 }
 
-function rollbackUpdate() {
-  const rollbackDir = ensureRollbackDir();
-  const candidates = fs.existsSync(rollbackDir) ? fs.readdirSync(rollbackDir).filter((name) => /AnimeOn-.*\.exe$/i.test(name)).sort().reverse() : [];
-  const backupFile = candidates.length ? path.join(rollbackDir, candidates[0]) : null;
-  if (!backupFile || !fs.existsSync(backupFile)) return { ok: false, error: 'Резервная копия версии не найдена' };
+async function getRollbackCandidates() {
+  const rollbackDir = await ensureRollbackDir();
+  let names = [];
+  try {
+    names = await fs.promises.readdir(rollbackDir);
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+  return names
+    .filter((name) => /^AnimeOn-.*\.exe$/i.test(name))
+    .filter((name) => normalizeVersion(name.replace(/^AnimeOn-(.*)\.exe$/i, '$1')) !== normalizeVersion(app.getVersion()))
+    .sort((left, right) => compareVersions(
+      right.replace(/^AnimeOn-(.*)\.exe$/i, '$1'),
+      left.replace(/^AnimeOn-(.*)\.exe$/i, '$1'),
+    ))
+    .map((name) => path.join(rollbackDir, name));
+}
+
+async function rollbackUpdate() {
+  const candidates = await getRollbackCandidates();
+  const backupFile = candidates[0] || null;
+  if (!backupFile || !await fileExists(backupFile)) return { ok: false, error: 'Резервная копия версии не найдена' };
   try {
     const target = process.env.PORTABLE_EXECUTABLE_PATH || process.execPath;
     if (target && target !== backupFile) {
       const backupPath = path.join(app.getPath('temp'), `animeon-rollback-${Date.now()}.bat`);
-      fs.writeFileSync(backupPath, [
+      await writeFileAtomically(backupPath, [
         '@echo off',
         'timeout /t 2 /nobreak >nul',
         `copy /y "${backupFile}" "${target}" >nul`,
         `start "" "${target}"`,
         `del /q "${backupPath}" 2>nul`,
-      ].join('\r\n'));
+      ].join('\r\n'), { encoding: 'utf8' });
       spawn('cmd.exe', ['/c', backupPath], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
       setQuitting(true);
-      setTimeout(() => app.exit(0), 500);
+      setTimeout(() => app.quit(), 500);
       return { ok: true, rollback: backupFile };
     }
     spawn(backupFile, ['--rollback'], { detached: true, stdio: 'ignore' }).unref();
     setQuitting(true);
-    setTimeout(() => app.exit(0), 500);
+    setTimeout(() => app.quit(), 500);
     return { ok: true, rollback: backupFile };
   } catch (err) {
     return { ok: false, error: String(err && err.message || err) };
   }
 }
 
-function applyUpdate() {
-  if (!downloadedInstaller || downloadedInstallerVersion !== lastUpdate?.latest || !fs.existsSync(downloadedInstaller)) return false;
-  backupCurrentExecutable();
+async function applyUpdate() {
+  if (!downloadedInstaller || downloadedInstallerVersion !== lastUpdate?.latest || !await fileExists(downloadedInstaller)) return false;
+  await backupCurrentExecutable();
   const portablePath = process.env.PORTABLE_EXECUTABLE_PATH;
   if (portablePath) {
     const bat = path.join(app.getPath('temp'), `animeon-update-${Date.now()}.bat`);
-    fs.writeFileSync(bat, [
+    await writeFileAtomically(bat, [
       '@echo off',
       'timeout /t 2 /nobreak >nul',
       `move /y "${portablePath}" "${portablePath}.old"`,
@@ -381,16 +468,16 @@ function applyUpdate() {
       `start "" "${portablePath}"`,
       `del /q "${portablePath}.old" 2>nul`,
       `del /q "${bat}" 2>nul`,
-    ].join('\r\n'));
+    ].join('\r\n'), { encoding: 'utf8' });
     spawn('cmd.exe', ['/c', bat], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
     setQuitting(true);
-    setTimeout(() => app.exit(0), 300);
+    setTimeout(() => app.quit(), 300);
     return true;
   }
 
   spawn(downloadedInstaller, ['/S', '--force-run'], { detached: true, stdio: 'ignore' }).unref();
   setQuitting(true);
-  setTimeout(() => app.exit(0), 500);
+  setTimeout(() => app.quit(), 500);
   return true;
 }
 
@@ -398,8 +485,19 @@ ipcMain.handle('upd:check', (event) => isTrustedAppEvent(event) ? checkUpdate() 
 ipcMain.handle('upd:get-data', async (event) => {
   if (!isTrustedAppEvent(event)) return { ok: false, reason: 'untrusted sender' };
   const info = lastUpdate || await checkUpdate(true);
-  if (!info?.ok) return info;
-  return { ...info, downloaded: await restoreDownloadedInstaller(info) };
+  const candidates = await getRollbackCandidates();
+  const rollbackFiles = await Promise.all(
+    candidates.map(async (candidate) => (await fileExists(candidate) ? candidate : null)),
+  );
+  const rollbackFile = rollbackFiles.find(Boolean);
+  const rollbackVersion = rollbackFile?.match(/^.*[\\/]AnimeOn-(.*)\.exe$/i)?.[1] || null;
+  if (!info?.ok) return { ...info, rollbackAvailable: !!rollbackVersion, rollbackVersion };
+  return {
+    ...info,
+    downloaded: await restoreDownloadedInstaller(info),
+    rollbackAvailable: !!rollbackVersion,
+    rollbackVersion,
+  };
 });
 
 ipcMain.on('upd:open', (event) => { if (isTrustedAppEvent(event)) openUpdatePanel(); });
@@ -409,9 +507,9 @@ ipcMain.on('upd:close', (event) => {
 });
 ipcMain.on('upd:pause', (event, paused) => { if (isTrustedAppEvent(event)) setDownloadPaused(paused); });
 ipcMain.on('upd:cancel', (event) => { if (isTrustedAppEvent(event)) cancelDownload(); });
-ipcMain.handle('upd:install', (event) => isTrustedAppEvent(event) ? { ok: applyUpdate() } : { ok: false, error: 'untrusted sender' });
+ipcMain.handle('upd:install', async (event) => isTrustedAppEvent(event) ? { ok: await applyUpdate() } : { ok: false, error: 'untrusted sender' });
 ipcMain.handle('upd:download', (event) => isTrustedAppEvent(event) ? downloadUpdate() : { ok: false, error: 'untrusted sender' });
-ipcMain.handle('upd:rollback', (event) => isTrustedAppEvent(event) ? rollbackUpdate() : { ok: false, error: 'untrusted sender' });
+ipcMain.handle('upd:rollback', async (event) => isTrustedAppEvent(event) ? rollbackUpdate() : { ok: false, error: 'untrusted sender' });
 
   return { checkUpdate };
 }

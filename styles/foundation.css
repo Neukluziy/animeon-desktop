@@ -21,6 +21,26 @@
   --surface-2: #17151f;
   --border: rgba(255,255,255,.09);
   --control-bg: rgba(255,255,255,.045);
+  --menu-bg: rgba(24,21,31,.82);
+  --menu-border: rgba(var(--a-rgb),.48);
+  --menu-text: #f4f2ff;
+  --menu-selected-bg: rgba(var(--a-rgb),.2);
+  --menu-selected-text: #ffffff;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --shadow-card: 0 16px 48px rgba(0,0,0,.24);
+  --focus-ring: 0 0 0 3px rgba(var(--a-rgb),.38);
+  --motion-fast: 120ms;
+  --motion-normal: 180ms;
+  --motion-slow: 240ms;
+  --accent-contrast: #fff;
+  --theme-speed: var(--motion-normal);
 }
 
 
@@ -130,9 +150,7 @@ body { display: flex; flex-direction: column; }
   align-items: center;
   gap: 10px;
   padding-left: 14px;
-  background:
-    radial-gradient(ellipse 55% 160% at 12% 50%, rgba(var(--a-rgb), .12), transparent 70%),
-    linear-gradient(180deg, #131118, var(--bg-2));
+  background: linear-gradient(180deg, #131118, var(--bg-2));
   -webkit-app-region: drag;
 }
 
@@ -239,6 +257,26 @@ body { display: flex; flex-direction: column; }
 .brand-name em {
   font-style: normal;
   color: var(--accent-light);
+}
+
+#brand-page-title { margin-left: 10px; max-width: 32vw; overflow: hidden; color: var(--text-dim); font-size: 11px; font-style: normal; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+
+html[data-title-display="compact"] .brand-name { font-size: 0; letter-spacing: 0; }
+html[data-title-display="compact"] .brand-name::before { content: "A"; font-size: 14px; letter-spacing: 0; }
+html[data-title-display="page"] #brand-page-title { display: inline !important; }
+html[data-title-display="page-only"] .brand-name { font-size: 0; letter-spacing: 0; }
+html[data-title-display="page-only"] #brand-page-title { display: inline !important; margin-left: 0; font-size: 13px; }
+
+button, [role="button"], select { cursor: pointer; }
+input, textarea, [contenteditable="true"] { user-select: text; }
+:focus-visible { outline: 2px solid var(--accent-light); outline-offset: 2px; box-shadow: var(--focus-ring); }
+html[data-high-contrast] :focus-visible { outline: 3px solid currentColor; outline-offset: 3px; box-shadow: 0 0 0 5px var(--bg); }
+html[data-high-contrast] :where(button, input, select, textarea, [role="button"]) { border-color: currentColor !important; }
+html[data-reduced-motion] *, html[data-reduced-motion] *::before, html[data-reduced-motion] *::after {
+  animation-duration: .01ms !important;
+  animation-iteration-count: 1 !important;
+  scroll-behavior: auto !important;
+  transition-duration: .01ms !important;
 }
 
 
@@ -694,4 +732,3 @@ body.loaded #wv {
   color: var(--text-dim);
   font-variant-numeric: tabular-nums;
 }
-

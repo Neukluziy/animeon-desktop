@@ -8,7 +8,7 @@ export function initPageLibrary({ native, cfg, toast, askConfirmation, store, ta
   const favoritesModal = document.getElementById('favorites-modal');
   const btnCloseFavorites = document.getElementById('btn-close-favorites');
   const favoritePagesList = document.getElementById('favorite-pages-list');
-  async function syncFavoriteButton(){try{const url=tabs.activeWebview?.getURL?.()||'';if(!url)return;const r=await native.pageFavorites();const found=(r?.items||[]).some(x=>samePageUrl(typeof x==='string'?x:x?.url, url));const icon=btnPageFavorite?.querySelector('.page-action-icon');if(icon) icon.innerHTML=found?'★':'<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M6 4.5A2.5 2.5 0 0 1 8.5 2h7A2.5 2.5 0 0 1 18 4.5V21l-6-3.5L6 21V4.5Z\"/></svg>';}catch{}}
+  async function syncFavoriteButton(){try{const url=tabs.activeWebview?.getURL?.()||'';if(!url)return;const r=await native.pageFavorites();const found=(r?.items||[]).some(x=>samePageUrl(typeof x==='string'?x:x?.url, url));const icon=btnPageFavorite?.querySelector('.page-action-icon');if(icon) icon.innerHTML=found?'★':'<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M6 4.5A2.5 2.5 0 0 1 8.5 2h7A2.5 2.5 0 0 1 18 4.5V21l-6-3.5L6 21V4.5Z\"/></svg>';}catch(error){console.warn('[AnimeOn] Could not sync page favorite state:',error);}}
 let recentPagesCache=[]; let favoritePagesCache=[];
 const pagesSearch=document.getElementById('pages-search');
 const favoritesSearch=document.getElementById('favorites-search');
@@ -27,7 +27,11 @@ async function openPages(){
     const r=await native.recentPages();
     recentPagesCache=r?.items||[];
     renderPageList(recentPagesList,recentPagesCache);
-  } catch { recentPagesCache=[]; renderPageList(recentPagesList,[]); }
+  } catch (error) {
+    console.warn('[AnimeOn] Could not load recent pages:', error);
+    recentPagesCache=[];
+    renderPageList(recentPagesList,[]);
+  }
 }
 async function openFavorites(){
   favoritesModal?.classList.add('show');
@@ -40,15 +44,29 @@ async function openFavorites(){
     const found=(favoritePagesCache||[]).some(x=>samePageUrl(typeof x==='string'?x:x?.url,url));
     const icon=btnPageFavorite?.querySelector('.page-action-icon');
     if(icon) icon.innerHTML=found?'★':'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4.5A2.5 2.5 0 0 1 8.5 2h7A2.5 2.5 0 0 1 18 4.5V21l-6-3.5L6 21V4.5Z"/></svg>';
-  } catch { favoritePagesCache=[]; renderPageList(favoritePagesList,[]); }
+  } catch (error) {
+    console.warn('[AnimeOn] Could not load page favorites:', error);
+    favoritePagesCache=[];
+    renderPageList(favoritePagesList,[]);
+  }
 }
 function renderPageList(root,items){
   if(!root) return;
   root.innerHTML='';
   const list=Array.isArray(items)?items:[];
-  if(!list.length){ root.innerHTML='<div class="st-hint pages-empty">Пока пусто</div>'; return; }
   const isRecent = root===recentPagesList;
   const isFav = root===favoritePagesList;
+  if(!list.length){
+    const empty=document.createElement('div');
+    empty.className='st-hint pages-empty';
+    empty.textContent=isRecent
+      ? 'Здесь появятся страницы, которые вы недавно открывали.'
+      : isFav
+        ? 'Добавьте страницу в избранное кнопкой-закладкой в панели.'
+        : 'Здесь пока нет сохранённых страниц.';
+    root.appendChild(empty);
+    return;
+  }
   const selectMode = isRecent ? pagesSelectMode : (isFav ? favSelectMode : false);
   const selectedSet = isRecent ? pagesSelected : (isFav ? favSelected : new Set());
   const toShow=list.slice(0,80);
@@ -95,18 +113,26 @@ function renderPageList(root,items){
       const targetUrl=urlKey;
       try{
         if(isRecent){
-          try{ await native.recentPagesRemove?.(targetUrl); }catch{}
+          try{ await native.recentPagesRemove(targetUrl); }catch(error){
+            console.warn('[AnimeOn] Could not remove a recent page:',error);
+            throw error;
+          }
           recentPagesCache=recentPagesCache.filter(it=>{ const u=typeof it==='string'?it:it.url; return u!==targetUrl && !samePageUrl(u,targetUrl); });
           renderPageList(recentPagesList, filterPages(recentPagesCache, pagesSearch?.value||''));
         } else {
-          try{ await native.togglePageFavorite({url:targetUrl}); }catch{}
-          try{ await native.pageFavoriteRemove?.(targetUrl); }catch{}
+          try{ await native.togglePageFavorite({url:targetUrl}); }catch(error){
+            console.warn('[AnimeOn] Could not update a page favorite:',error);
+            throw error;
+          }
           favoritePagesCache=favoritePagesCache.filter(it=>{ const u=typeof it==='string'?it:it.url; return u!==targetUrl && !samePageUrl(u,targetUrl); });
           renderPageList(favoritePagesList, filterPages(favoritePagesCache, favoritesSearch?.value||''));
           syncFavoriteButton();
         }
         toast('Удалено');
-      }catch{ toast('Не удалось удалить','error'); }
+      }catch(error){
+        console.warn('[AnimeOn] Could not delete a page:',error);
+        toast('Не удалось удалить','error');
+      }
     });
     b.appendChild(del);
     const arrow=document.createElement('span'); arrow.className='page-list-arrow'; arrow.textContent='›';
@@ -194,8 +220,10 @@ pagesDeleteBtn?.addEventListener('click',async()=>{
   const toDelete=new Set(pagesSelected);
   try{
     for(const url of toDelete){
-      try{ await native.recentPagesRemove?.(url); }catch{}
-      recentPagesCache=recentPagesCache.filter(it=>{ const u=typeof it==='string'?it:it.url; return !toDelete.has(u) && !samePageUrl(u, [...toDelete][0]); });
+      try{ await native.recentPagesRemove(url); }catch(error){
+        console.warn('[AnimeOn] Could not remove a selected recent page:',error);
+        throw error;
+      }
       recentPagesCache=recentPagesCache.filter(it=>{ const u=typeof it==='string'?it:it.url; for(const d of toDelete) if(d===u || samePageUrl(d,u)) return false; return true; });
     }
     pagesSelected.clear();
@@ -203,7 +231,10 @@ pagesDeleteBtn?.addEventListener('click',async()=>{
     updatePagesSelectUI();
     renderPageList(recentPagesList, filterPages(recentPagesCache, pagesSearch?.value||''));
     toast('Удалено');
-  }catch(e){ toast('Не удалось удалить','error'); }
+  }catch(error){
+    console.warn('[AnimeOn] Could not delete selected recent pages:',error);
+    toast('Не удалось удалить','error');
+  }
 });
 favDeleteBtn?.addEventListener('click',async()=>{
   if(!favSelected.size) return;
@@ -211,8 +242,10 @@ favDeleteBtn?.addEventListener('click',async()=>{
   const toDelete=new Set(favSelected);
   try{
     for(const url of toDelete){
-      try{ await native.togglePageFavorite({url}); }catch{}
-      try{ await native.pageFavoriteRemove?.(url); }catch{}
+      try{ await native.togglePageFavorite({url}); }catch(error){
+        console.warn('[AnimeOn] Could not update a selected page favorite:',error);
+        throw error;
+      }
     }
     favoritePagesCache=favoritePagesCache.filter(it=>{ const u=typeof it==='string'?it:it.url; for(const d of toDelete) if(d===u || samePageUrl(d,u)) return false; return true; });
     favSelected.clear();
@@ -221,7 +254,10 @@ favDeleteBtn?.addEventListener('click',async()=>{
     renderPageList(favoritePagesList, filterPages(favoritePagesCache, favoritesSearch?.value||''));
     syncFavoriteButton();
     toast('Удалено из избранного');
-  }catch(e){ toast('Не удалось удалить','error'); }
+  }catch(error){
+    console.warn('[AnimeOn] Could not delete selected page favorites:',error);
+    toast('Не удалось удалить','error');
+  }
 });
 btnPages?.addEventListener('click',openPages);
 btnPageFavorites?.addEventListener('click',openFavorites);
@@ -231,16 +267,23 @@ pagesModal?.addEventListener('click',e=>{if(e.target===pagesModal)pagesModal.cla
 favoritesModal?.addEventListener('click',e=>{if(e.target===favoritesModal)favoritesModal.classList.remove('show')});
 btnPageFavorite?.addEventListener('click',async()=>{
   let url='',title='';
-  try{url=tabs.activeWebview?.getURL?.()||'';}catch{}
+  try{url=tabs.activeWebview?.getURL?.()||'';}catch(error){
+    console.warn('[AnimeOn] Could not read the active page URL:',error);
+  }
   if(!isAnimeOnUrl(url)) url=tabs.pageTabs[tabs.activeTab]?.url||'';
-  try{title=await tabs.activeWebview?.getTitle?.()||'';}catch{}
+  try{title=await tabs.activeWebview?.getTitle?.()||'';}catch(error){
+    console.warn('[AnimeOn] Could not read the active page title:',error);
+  }
   if(!isAnimeOnUrl(url)){toast('Открой страницу AnimeOn, чтобы добавить её в избранное','error');return;}
   try{
     const r=await native.togglePageFavorite({url,title});
     if(!r?.ok){toast('Не удалось изменить избранное','error');return;}
     syncFavoriteButton();
     toast(r.favorite?'Добавлено в избранное':'Удалено из избранного');
-  }catch{toast('Не удалось изменить избранное','error');}
+  }catch(error){
+    console.warn('[AnimeOn] Could not update page favorite:',error);
+    toast('Не удалось изменить избранное','error');
+  }
 });
   return { openPages, openFavorites, syncFavoriteButton };
 }

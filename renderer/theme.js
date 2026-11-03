@@ -1,7 +1,8 @@
 export function initThemeController({ cfg, store, applyGuestStyles, toast, native }) {
   const themeSwatches = [...document.querySelectorAll('.theme-swatch')];
   const themeName = document.getElementById('theme-name');
-  const customColorInput = document.getElementById('custom-color-input');
+  const reduceMotionToggle = document.getElementById('reduce-motion-toggle');
+  const highContrastToggle = document.getElementById('high-contrast-toggle');
   const customColorOpen = document.getElementById('custom-color-open');
   const customPicker = document.getElementById('custom-picker');
   const customPickerClose = document.getElementById('custom-picker-close');
@@ -16,13 +17,14 @@ export function initThemeController({ cfg, store, applyGuestStyles, toast, nativ
   const pickerPreviewName = document.getElementById('custom-picker-preview-name');
   const customColorValue = document.getElementById('custom-color-value');
   const customColorCopy = document.getElementById('custom-color-copy');
-  const themeNames = { violet: 'Фиолетовый', blue: 'Синий', cyan: 'Бирюзовый', sky: 'Небесный', indigo: 'Индиго', emerald: 'Изумрудный', green: 'Зелёный', lime: 'Лаймовый', yellow: 'Жёлтый', amber: 'Янтарный', orange: 'Оранжевый', red: 'Красный', rose: 'Розовый', pink: 'Розовый', fuchsia: 'Фуксия', slate: 'Серо-синий', gray: 'Серый', teal: 'Тёмная бирюза', mint: 'Мята', gold: 'Золото', coral: 'Коралл', lavender: 'Лаванда', crimson: 'Алый', electric: 'Электрик', light: 'Светлая' };
-  const presetThemes = new Set(['violet', 'blue', 'cyan', 'sky', 'indigo', 'emerald', 'green', 'lime', 'yellow', 'amber', 'orange', 'red', 'rose', 'pink', 'fuchsia', 'slate', 'gray', 'teal', 'mint', 'gold', 'coral', 'lavender', 'crimson', 'electric', 'light']);
+  const themeNames = { violet: 'Фиолетовый', blue: 'Синий', cyan: 'Бирюзовый', sky: 'Небесный', indigo: 'Индиго', emerald: 'Изумрудный', green: 'Зелёный', lime: 'Лаймовый', yellow: 'Жёлтый', amber: 'Янтарный', orange: 'Оранжевый', red: 'Красный', rose: 'Розовый', pink: 'Розовый', fuchsia: 'Фуксия', slate: 'Серо-синий', gray: 'Серый', teal: 'Тёмная бирюза', mint: 'Мята', gold: 'Золото', coral: 'Коралл', lavender: 'Лаванда', crimson: 'Алый', electric: 'Электрик' };
+  const presetThemes = new Set(['violet', 'blue', 'cyan', 'sky', 'indigo', 'emerald', 'green', 'lime', 'yellow', 'amber', 'orange', 'red', 'rose', 'pink', 'fuchsia', 'slate', 'gray', 'teal', 'mint', 'gold', 'coral', 'lavender', 'crimson', 'electric']);
   let activeTheme = presetThemes.has(cfg.theme) || cfg.theme === 'custom' ? cfg.theme : 'violet';
   let pickerHueValue = 260;
   let pickerSatValue = 0.65;
   let pickerValValue = 0.96;
   let pickerOpen = false;
+  const colorScheme = window.matchMedia?.('(prefers-color-scheme: light)');
   if (!cfg.custom) cfg.custom = '#8b5cf6';
 
   function resetThemeVars() {
@@ -52,28 +54,68 @@ export function initThemeController({ cfg, store, applyGuestStyles, toast, nativ
     root.style.setProperty('--ad-rgb', dark.join(','));
   }
 
-  function isNight() {
+  function applyColorMode() {
+    const preference = ['dark', 'light', 'system', 'schedule'].includes(cfg.colorMode) ? cfg.colorMode : 'dark';
     const hour = new Date().getHours();
-    return hour >= 22 || hour < 6;
+    const effectiveMode = preference === 'system'
+      ? (colorScheme?.matches ? 'light' : 'dark')
+      : preference === 'schedule'
+        ? (hour >= 6 && hour < 22 ? 'light' : 'dark')
+        : preference;
+    document.documentElement.dataset.colorMode = effectiveMode;
+    if (reduceMotionToggle) reduceMotionToggle.checked = !!cfg.reduceMotion;
+    if (highContrastToggle) highContrastToggle.checked = !!cfg.highContrast;
+    document.documentElement.toggleAttribute('data-high-contrast', !!cfg.highContrast);
+    const systemReducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+    document.documentElement.toggleAttribute('data-reduced-motion', !!cfg.reduceMotion || !!systemReducedMotion);
+  }
+
+  function applyAccentContrast() {
+    const values = getComputedStyle(document.documentElement).getPropertyValue('--a-rgb').split(',').map(Number);
+    if (values.length !== 3 || values.some((value) => !Number.isFinite(value))) return;
+    const luminance = values.map((value) => {
+      const channel = value / 255;
+      return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+    }).reduce((sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index], 0);
+    const whiteContrast = 1.05 / (luminance + 0.05);
+    const blackContrast = (luminance + 0.05) / 0.05;
+    document.documentElement.style.setProperty('--accent-contrast', whiteContrast >= blackContrast ? '#fff' : '#111');
   }
 
   function applyTheme(theme, options = {}) {
     document.documentElement.classList.add('theme-transitioning');
     clearTimeout(window.__themeTransitionTimer);
-    window.__themeTransitionTimer = setTimeout(() => document.documentElement.classList.remove('theme-transitioning'), 520);
+    window.__themeTransitionTimer = setTimeout(() => document.documentElement.classList.remove('theme-transitioning'), 250);
     if (theme !== undefined) activeTheme = theme;
     resetThemeVars();
     document.documentElement.dataset.theme = activeTheme;
     if (activeTheme === 'custom') applyCustomColor(cfg.custom);
-    themeSwatches.forEach((swatch) => swatch.classList.toggle('active', swatch.dataset.theme === activeTheme));
+    applyAccentContrast();
+    applyColorMode();
+    themeSwatches.forEach((swatch) => {
+      const selected = swatch.dataset.theme === activeTheme;
+      swatch.classList.toggle('active', selected);
+      swatch.setAttribute('aria-pressed', selected ? 'true' : 'false');
+      if (!swatch.hasAttribute('aria-label')) swatch.setAttribute('aria-label', swatch.title || `Акцент ${swatch.dataset.theme}`);
+    });
     if (themeName) themeName.textContent = activeTheme === 'custom' ? 'Свой цвет' : (themeNames[activeTheme] || activeTheme);
-    if (customColorInput) customColorInput.value = cfg.custom || '#8b5cf6';
     if (customColorValue) customColorValue.textContent = String(cfg.custom || '#8b5cf6').toUpperCase();
     customColorOpen?.style.setProperty('--picker-color', cfg.custom || '#8b5cf6');
     if (pickerOpen) updatePickerVisual(cfg.custom || '#8B5CF6');
     if (!options.skipSave) store('theme', activeTheme);
     applyGuestStyles();
   }
+
+  reduceMotionToggle?.addEventListener('change', () => {
+    store('reduceMotion', reduceMotionToggle.checked);
+    applyColorMode();
+  });
+  highContrastToggle?.addEventListener('change', () => {
+    store('highContrast', highContrastToggle.checked);
+    applyColorMode();
+  });
+  colorScheme?.addEventListener?.('change', applyColorMode);
+  window.matchMedia?.('(prefers-reduced-motion: reduce)')?.addEventListener?.('change', applyColorMode);
 
   function clamp(value, min, max) {
     return Math.min(max, Math.max(min, value));
@@ -178,7 +220,11 @@ export function initThemeController({ cfg, store, applyGuestStyles, toast, nativ
     if (!element) return;
     let down = false;
     const apply = (event) => { callback(event); event.preventDefault(); };
-    element.addEventListener('pointerdown', (event) => { down = true; try { element.setPointerCapture(event.pointerId); } catch {} apply(event); });
+    element.addEventListener('pointerdown', (event) => {
+      down = true;
+      try { element.setPointerCapture(event.pointerId); } catch { void 0; }
+      apply(event);
+    });
     element.addEventListener('pointermove', (event) => { if (down) apply(event); });
     element.addEventListener('pointerup', () => { down = false; });
     element.addEventListener('pointercancel', () => { down = false; });
@@ -246,17 +292,14 @@ export function initThemeController({ cfg, store, applyGuestStyles, toast, nativ
       const result = await new EyeDropper().open();
       setCustomHex(result.sRGBHex);
       toast('Цвет выбран');
-    } catch {}
+    } catch { void 0; }
   });
 
   setInterval(() => {
-    const night = isNight();
-    if (night === document.documentElement.hasAttribute('data-night')) return;
-    if (night) document.documentElement.dataset.night = '1';
-    else delete document.documentElement.dataset.night;
-    applyTheme(undefined, { skipSave: true });
+    if (cfg.colorMode === 'schedule') applyColorMode();
   }, 60000);
 
   themeSwatches.forEach((swatch) => swatch.addEventListener('click', () => applyTheme(swatch.dataset.theme)));
-  return { applyTheme, getActiveTheme: () => activeTheme };
+  applyTheme(activeTheme, { skipSave: true });
+  return { applyTheme, applyColorMode, getActiveTheme: () => activeTheme };
 }

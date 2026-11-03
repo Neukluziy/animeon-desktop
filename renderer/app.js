@@ -8,51 +8,38 @@ import { initThemeController } from './theme.js';
 import { initSiteAppearance } from './site-appearance.js';
 import { initAccounts } from './accounts.js';
 import { initUpdatePanel } from '../windows/update.js';
+import { createStore } from './store.js';
+import { createPlaybackControls } from './playback-controls.js';
+import { initFeedback } from './feedback.js';
+import { createCustomSelectManager } from './custom-select.js';
+import { initCommandPalette } from './command-palette.js';
+import { initFindInPage } from './find-in-page.js';
+import { initSiteNavigation } from './site-navigation.js';
+import { initErrorScreen } from './error-screen.js';
+import { initTabController } from './tab-controller.js';
+import { initUpdateStatus } from './update-status.js';
+import { createSplashFallback, initSplash } from './splash.js';
+import { createSiteListController } from './site-list.js';
+import { createProfileController } from './profile-controller.js';
+import { initSettingsNavigation } from './settings-navigation.js';
+import { createVolumeControls } from './volume-controls.js';
+import { initWindowVisibility } from './window-visibility.js';
 
+const customSelectManager = createCustomSelectManager({});
+const { enhanceNativeSelect, initCSelect, syncCustomSelect } = customSelectManager;
+const appStore = createStore(window.native.getConfig() || {}, (patch) => window.native.setConfig(patch));
+const cfg = appStore.state;
+const { toast, askConfirmation } = initFeedback({});
+if (cfg.showSplash === false) document.getElementById('splash')?.remove();
 const updateHost = document.getElementById('update-overlay-host');
 const updateTemplate = document.getElementById('update-panel-template');
 if (!updateHost || !updateTemplate) throw new Error('Не найдена разметка панели обновления');
 initUpdatePanel({ native: window.native, host: updateHost, template: updateTemplate });
 
-const cfg = window.native.getConfig() || {};
 const activeAccount = () => cfg.accounts?.find((item) => item.id === cfg.activeAccountId);
 const accountPartition = () => activeAccount()?.partition || 'persist:animeon';
 
-const __splashFallback = (() => {
-  const root = document.getElementById('splash');
-  const fill = root?.querySelector('.s-bar i');
-  const pct = root?.querySelector('.s-pct');
-  if (!root || !fill || !pct) return null;
-  let value = Number.parseFloat(fill.style.width) || 5;
-  let target = value;
-  let raf = 0;
-  let takenOver = false;
-  const paint = () => {
-    if (takenOver) return;
-    value += (target - value) * 0.075;
-    if (Math.abs(target - value) < 0.08) value = target;
-    fill.style.width = `${Math.round(value * 10) / 10}%`;
-    pct.textContent = `${Math.round(value)}%`;
-    raf = requestAnimationFrame(paint);
-  };
-  const set = (v) => {
-    if (Number.isFinite(v)) target = Math.max(target, Math.min(94, v));
-  };
-  set(8);
-  setTimeout(() => set(18), 220);
-  setTimeout(() => set(32), 520);
-  setTimeout(() => set(48), 900);
-  setTimeout(() => set(64), 1350);
-  setTimeout(() => set(78), 1900);
-  setTimeout(() => set(88), 2600);
-  raf = requestAnimationFrame(paint);
-  return {
-    takeOver() {
-      takenOver = true;
-      cancelAnimationFrame(raf);
-    }
-  };
-})();
+const __splashFallback = createSplashFallback();
 const webviewHost = document.getElementById('view-area');
 const firstWebview = document.createElement('webview');
 firstWebview.id = 'wv';
@@ -63,15 +50,36 @@ firstWebview.setAttribute('webpreferences', 'webSecurity=yes,contextIsolation=ye
 firstWebview.setAttribute('preload', new URL('../app/site-preload.js', import.meta.url).href);
 webviewHost?.appendChild(firstWebview);
 let activeWebview = firstWebview;
+let pageTabs = [];
+let activeTab = 0;
+let pendingPosterUrls = null;
+const mediaStates = new WeakMap();
+const inactiveTabUnloadTimers = new Map();
 const webviewListeners = [];
 const webviewListenerMap = new WeakMap();
 
 function attachSiteZoomListener(webview) {
   webview.addEventListener('ipc-message', (event) => {
-    if (webview !== activeWebview || event.channel !== 'site:ctrl-wheel-zoom') return;
-    const delta = event.args?.[0];
-    if (delta !== 0.1 && delta !== -0.1) return;
-    window.native.zoom(delta);
+    if (event.channel === 'site:media-state') {
+      const state = event.args?.[0];
+      if (state && typeof state.playing === 'boolean' && typeof state.audible === 'boolean' && typeof state.complete === 'boolean') mediaStates.set(webview, state);
+      return;
+    }
+    if (webview !== activeWebview) return;
+    if (event.channel === 'site:ctrl-wheel-zoom') {
+      const delta = event.args?.[0];
+      if (delta === 0.1 || delta === -0.1) window.native.zoom(delta);
+      return;
+    }
+    if (event.channel === 'site:scroll') {
+      const state = event.args?.[0];
+      if (!cfg.autoHide || !booted || picker?.classList.contains('show') || settingsOverlay?.classList.contains('show')) return;
+      const y = Number(state?.y);
+      if (!Number.isFinite(y)) return;
+      if (y > lastScrollY + 8) setChromeHidden(true);
+      else if (y < lastScrollY - 8) setChromeHidden(false);
+      lastScrollY = y;
+    }
   });
 }
 
@@ -116,7 +124,7 @@ const wv = new Proxy({}, {
           const list = webviewListenerMap.get(webview) || [];
           for (const item of list.slice()) {
             if (item[0] === type && item[1] === listener) {
-              try { webview.removeEventListener(item[0], item[2], item[3]); } catch {}
+              try { webview.removeEventListener(item[0], item[2], item[3]); } catch { void 0; }
             }
           }
         }
@@ -130,7 +138,11 @@ const wv = new Proxy({}, {
 });
 
 function createTabWebview(index) {
-  if (index === 0) return firstWebview;
+  if (index === 0) {
+    if (!firstWebview.isConnected) webviewHost?.appendChild(firstWebview);
+    tabWebviews[0] = firstWebview;
+    return firstWebview;
+  }
   const webview = document.createElement('webview');
   webview.id = `wv-tab-${index}`;
   webview.setAttribute('allowpopups', '');
@@ -145,10 +157,10 @@ function createTabWebview(index) {
   attachWebviewListeners(webview);
   webview.addEventListener('dom-ready', () => {
     if (tabWebviews[index] === webview && activeWebview === webview) {
-      try { window.native.setActiveSiteWebview(webview.getWebContentsId()); } catch {}
-      try { webview.focus(); } catch {}
-      try { updateNav(); } catch {}
-      try { applyGuestStyles(); } catch {}
+      try { window.native.setActiveSiteWebview(webview.getWebContentsId()); } catch { void 0; }
+      try { webview.focus(); } catch { void 0; }
+      try { updateNav(); } catch { void 0; }
+      try { applyGuestStyles(); } catch { void 0; }
     }
   });
   return webview;
@@ -161,7 +173,7 @@ function showTabWebview(index) {
   const target = tabWebviews[index];
   if (!target) return false;
   activeWebview = target;
-  try { window.native.setActiveSiteWebview(target.getWebContentsId()); } catch {}
+  try { window.native.setActiveSiteWebview(target.getWebContentsId()); } catch { void 0; }
   tabWebviews.forEach((webview, i) => {
     if (!webview) return;
     const active = i === index;
@@ -197,8 +209,6 @@ btnClose?.addEventListener('click', () => window.native.close());
 window.native.onWinState?.((maximized) => btnFs?.classList.toggle('is-max', !!maximized));
 window.native.onFsState?.((fullscreen) => document.body.classList.toggle('is-fs', !!fullscreen));
 const btnSettings = document.getElementById('btn-settings');
-const btnHotkeysMain = document.getElementById('btn-hotkeys-main');
-const btnScreenshotsMain = document.getElementById('btn-screenshots-main');
 const btnVolume = document.getElementById('btn-volume');
 const volumeWrap = document.querySelector('.volume-wrap');
 const volumePanel = document.getElementById('volume-panel');
@@ -208,14 +218,6 @@ const volumeMinus = document.getElementById('volume-minus');
 const volumePlus = document.getElementById('volume-plus');
 const volumeMute = document.getElementById('volume-mute');
 const settingsOverlay = document.getElementById('settings');
-const hotkeysModal = document.getElementById('hotkeys-modal');
-const btnHotkeys = document.getElementById('btn-hotkeys');
-const btnCloseHotkeys = document.getElementById('btn-close-hotkeys');
-const screenshotsModal = document.getElementById('screenshots-modal');
-const btnCloseScreenshots = document.getElementById('btn-close-screenshots');
-const screenshotsList = document.getElementById('screenshots-list');
-const screenshotsCount = document.getElementById('screenshots-count');
-const btnScreenshotsOpenFolder = document.getElementById('btn-screenshots-open-folder');
 const btnCloseSettings = document.getElementById('btn-close-settings');
 const picker = document.getElementById('site-picker');
 const welcomeScreen = document.getElementById('welcome-screen');
@@ -229,16 +231,13 @@ const autohideToggle = document.getElementById('autohide-toggle');
 const compactToggle = document.getElementById('compact-toggle');
 const alwaysOnTopToggle = document.getElementById('alwaysontop-toggle');
 const lowPowerToggle = document.getElementById('lowpower-toggle');
+const glassWindowToggle = document.getElementById('glass-window-toggle');
+const showSplashToggle = document.getElementById('show-splash-toggle');
+const titleDisplaySelect = document.getElementById('title-display-select');
 const btnRestartWebview = document.getElementById('btn-restart-webview');
 const btnClearCache = document.getElementById('btn-clear-cache');
 const btnDevtools = document.getElementById('btn-devtools');
-const btnDiagnostics = document.getElementById('btn-diagnostics');
 const diagnosticsOutput = document.getElementById('diagnostics-output');
-const commandPalette = document.getElementById('command-palette');
-const commandInput = document.getElementById('command-input');
-const commandList = document.getElementById('command-list');
-const offlineScreen = document.getElementById('offline-screen');
-const offlineRetry = document.getElementById('offline-retry');
 const confirmScreen = document.getElementById('confirm-close-screen');
 const confirmYes = document.getElementById('confirm-close-yes');
 const confirmNo = document.getElementById('confirm-close-no');
@@ -256,48 +255,32 @@ const btnOpenDataFolder = document.getElementById('btn-open-data-folder');
 const siteCssInput = document.getElementById('site-css-input');
 const btnSiteCssApply = document.getElementById('btn-site-css-apply');
 const btnSiteCssReset = document.getElementById('btn-site-css-reset');
+const btnSiteCssRevert = document.getElementById('btn-site-css-revert');
+const siteCssSnippet = document.getElementById('site-css-snippet');
+const siteCssStatus = document.getElementById('site-css-status');
 const smoothScrollToggle = document.getElementById('smooth-scroll-toggle');
 const siteScrollbarsToggle = document.getElementById('site-scrollbars-toggle');
-let profileValue = '';
 const profileSelect = initCSelect('profile-select', null);
 const styleProfileName = document.getElementById('style-profile-name');
 const btnProfileSave = document.getElementById('btn-profile-save');
 const btnProfileLoad = document.getElementById('btn-profile-load');
 const btnProfileDelete = document.getElementById('btn-profile-delete');
 const btnUpdOpenRelease = document.getElementById('btn-upd-open-release');
-const settingsNav = document.getElementById('settings-nav');
-const toastStack = document.getElementById('toast-stack');
 const mediaOverlay = document.getElementById('media-overlay');
 const mediaOverlayText = document.getElementById('media-overlay-text');
-const hotkeysList = document.getElementById('hotkeys-list');
-const btnHotkeysReset = document.getElementById('btn-hotkeys-reset');
 const stVersion = document.getElementById('st-version');
 const updStatus = document.getElementById('upd-status');
 const btnUpdGet = document.getElementById('btn-upd-get');
 const btnUpdCheck = document.getElementById('btn-upd-check');
-const errorScreen = document.getElementById('error-screen');
-const errorMessage = document.getElementById('error-message');
-const btnErrorRetry = document.getElementById('btn-error-retry');
-const btnErrorMirror = document.getElementById('btn-error-mirror');
+const brandPageTitle = document.getElementById('brand-page-title');
 const posterWall = document.getElementById('poster-wall');
-const pageToolbar = document.getElementById('page-toolbar');
-const tabsBar = document.getElementById('tabs-bar');
-const tabsCount = document.getElementById('tabs-count');
-const tabsSidebarToggle = document.getElementById('btn-tabs-sidebar-toggle');
 const btnNewTab = document.getElementById('btn-new-tab');
 const btnDnd = document.getElementById('btn-dnd');
-const findBar = document.getElementById('find-bar');
-const findInput = document.getElementById('find-input');
-const findPrev = document.getElementById('find-prev');
-const findNext = document.getElementById('find-next');
-const findClose = document.getElementById('find-close');
-const findCount = document.getElementById('find-count');
 const watchNotesModal = document.getElementById('watch-notes-modal');
 const btnCloseWatchNotes = document.getElementById('btn-close-watch-notes');
 const btnWatchNotes = document.getElementById('btn-watch-notes');
-const resumeToggle = document.getElementById('resume-toggle');
-const autoNextToggle = document.getElementById('autonext-toggle');
-const dndToggle = document.getElementById('dnd-toggle');
+const effectsModeSelect = document.getElementById('effects-mode-select');
+document.querySelectorAll('select').forEach(enhanceNativeSelect);
 const notifyAdvancedToggle = document.getElementById('notify-toggle-advanced');
 const discordRpcControls = {
   enabled: document.getElementById('discord-rpc-enabled'),
@@ -317,22 +300,36 @@ const btnNetApply = document.getElementById('btn-net-apply');
 
 let booted = false;
 let firstLaunchOnboarding = false;
+let revealApp = null;
 
 setTimeout(() => {
   try {
     if (booted) return;
     console.error('[AnimeOn] Инициализация зависла дольше 8 сек — принудительно показываю интерфейс.');
-    try { __splashFallback?.takeOver(); } catch {}
-    try { revealApp(0); } catch {}
+    try { __splashFallback?.takeOver(); } catch (error) {
+      console.warn('[AnimeOn] Could not stop the splash fallback animation:', error);
+    }
+    try {
+      if (typeof revealApp === 'function') revealApp(0);
+      else {
+        booted = true;
+        document.body.classList.add('loaded');
+        splash?.remove();
+      }
+    } catch (error) {
+      console.error('[AnimeOn] Could not reveal the app after startup timeout:', error);
+    }
     try {
       if (!firstLaunchOnboarding) {
         const p = document.getElementById('site-picker');
         if (p) { p.classList.add('show'); document.body.classList.add('picker-visible'); }
       }
-    } catch {}
+    } catch (error) {
+      console.warn('[AnimeOn] Could not restore the site picker after startup timeout:', error);
+    }
   } catch (e) {
-    try { console.error('[AnimeOn] watchdog error', e); } catch {}
-    try { document.getElementById('splash')?.remove(); } catch {}
+    console.error('[AnimeOn] watchdog error', e);
+    try { document.getElementById('splash')?.remove(); } catch { void 0; }
   }
 }, 8000);
 let currentSite = null;
@@ -343,7 +340,11 @@ const accessKeyFeature = initAccessKeyFeature({
   native: window.native, cfg, toast, askConfirmation,
   isFirstLaunch: () => firstLaunchOnboarding,
   isRememberedSite: () => rememberSite,
-  reloadWebviews: () => tabWebviews.forEach((webview) => { try { webview?.reload(); } catch {} }),
+  reloadWebviews: () => tabWebviews.forEach((webview) => {
+    try { webview?.reload(); } catch (error) {
+      console.warn('[AnimeOn] Could not reload an account webview:', error);
+    }
+  }),
 });
 const DEFAULT_DISCORD_RPC_SETTINGS = {
   enabled: true,
@@ -386,108 +387,142 @@ for (const [key, input] of Object.entries(discordRpcControls)) {
 
 const SITES = {
   cc: { url: 'https://animeon.cc/', label: 'animeon.cc' },
-  co: { url: 'https://v1.animeon.co/', label: 'v1.animeon.co' },
+  co: { url: 'https://v2.animeon.co/', label: 'v2.animeon.co' },
 };
-
-function applySiteList(list) {
-  if (!Array.isArray(list) || list.length < 2) return false;
-
-  const first = list[0];
-  const second = list[1];
-  if (!first?.url || !second?.url) return false;
-
-  SITES.cc = {
-    url: String(first.url).endsWith('/') ? String(first.url) : `${String(first.url)}/`,
-    label: String(first.label || first.url).replace(/^https?:\/\//i, '').replace(/\/$/, ''),
-  };
-  SITES.co = {
-    url: String(second.url).endsWith('/') ? String(second.url) : `${String(second.url)}/`,
-    label: String(second.label || second.url).replace(/^https?:\/\//i, '').replace(/\/$/, ''),
-  };
-
-  document.querySelectorAll('[data-site-label="cc"]').forEach((el) => {
-    el.textContent = SITES.cc.label;
-  });
-  document.querySelectorAll('[data-site-label="co"]').forEach((el) => {
-    el.textContent = SITES.co.label;
-  });
-
-  document.querySelectorAll('[data-site]').forEach((el) => {
-    const id = el.dataset.site;
-    const site = SITES[id];
-    if (!site) return;
-    el.title = site.url;
-  });
-
-  if (currentSite) {
-    updateMirrorBtn();
-    updateSiteFromUrl?.(SITES[currentSite].url);
-  }
-  renderTabs();
-  return true;
+function saveTabs(...args) {
+  return tabController.saveTabs(...args);
 }
-
-try {
-  applySiteList(cfg.siteList);
-} catch {}
-
-async function loadSitesFromRemote() {
-  try {
-    const previousSites = { cc: { ...SITES.cc }, co: { ...SITES.co } };
-    const r = await window.native.fetchSites();
-    if (r?.ok) {
-      if (applySiteList(r.sites)) {
-        const remapSiteUrl = (value) => {
-          try {
-            const url = new URL(String(value || ''));
-            for (const id of ['cc', 'co']) {
-              const oldHost = new URL(previousSites[id].url).hostname.toLowerCase();
-              if (url.hostname.toLowerCase() !== oldHost && !url.hostname.toLowerCase().endsWith(`.${oldHost}`)) continue;
-              const newSiteUrl = new URL(SITES[id].url);
-              url.protocol = newSiteUrl.protocol;
-              url.host = newSiteUrl.host;
-              return url.href;
-            }
-          } catch {}
-          return value;
-        };
-        const remapItems = (items) => (Array.isArray(items) ? items.map((item) => {
-          if (typeof item === 'string') return remapSiteUrl(item);
-          return item && typeof item === 'object' && item.url ? { ...item, url: remapSiteUrl(item.url) } : item;
-        }) : []);
-        cfg.siteList = r.sites;
-        cfg.tabs = remapItems(cfg.tabs);
-        cfg.lastUrl = remapSiteUrl(cfg.lastUrl);
-        cfg.history = remapItems(cfg.history);
-        cfg.favorites = remapItems(cfg.favorites);
-        cfg.recentPages = remapItems(cfg.recentPages);
-        cfg.pageFavorites = remapItems(cfg.pageFavorites);
-        window.native.setConfig({
-          siteList: cfg.siteList,
-          tabs: cfg.tabs,
-          lastUrl: cfg.lastUrl,
-          history: cfg.history,
-          favorites: cfg.favorites,
-          recentPages: cfg.recentPages,
-          pageFavorites: cfg.pageFavorites,
-        });
-        return true;
-      }
-    }
-    applySiteList(r?.sites || cfg.siteList);
-  } catch {
-    try { applySiteList(cfg.siteList); } catch {}
-  }
+function loadTabUrl(...args) {
+  return tabController.loadTabUrl(...args);
 }
-const remoteSitesReady = loadSitesFromRemote();
+const siteNavigation = initSiteNavigation({
+  sites: SITES,
+  cfg,
+  store,
+  native: window.native,
+  getCurrentSite: () => currentSite,
+  setCurrentSite: (value) => { currentSite = value; },
+  getPageTabs: () => pageTabs,
+  setPageTabs: (value) => { pageTabs = value; },
+  getActiveTab: () => activeTab,
+  getTabWebviews: () => tabWebviews,
+  createTabWebview,
+  showTabWebview,
+  loadTabUrl,
+  saveTabs,
+  loadSiteEditor,
+  accessKeyFeature,
+  toast,
+  isFirstLaunch: () => firstLaunchOnboarding,
+  setFirstLaunch: (value) => { firstLaunchOnboarding = value; },
+  setPosterWall,
+  getPendingPosterUrls: () => pendingPosterUrls,
+  setPendingPosterUrls: (value) => { pendingPosterUrls = value; },
+  elements: {
+    btnSite,
+    picker,
+    welcomeScreen,
+    welcomeContinue,
+    rememberPick,
+    rememberSettings,
+    btnContinue,
+  },
+});
+const { activateSite, getOtherSiteId, openSite, showWelcomeScreen, switchMirror, updateMirrorBtn } = siteNavigation;
+
+const siteListController = createSiteListController({
+  cfg,
+  native: window.native,
+  sites: SITES,
+  getCurrentSite: () => currentSite,
+  updateMirrorBtn: () => updateMirrorBtn(),
+  updateSiteFromUrl: (url) => updateSiteFromUrl?.(url),
+  renderTabs: () => renderTabs(),
+});
+const { applySiteList, loadSitesFromRemote } = siteListController;
+
 const appInfo = window.native.getAppInfo() || { version: '' };
+const appConstants = appInfo.constants;
 document.getElementById('about-version-value')?.append(`v${appInfo.version || ''}`);
+if (appInfo.version && cfg.lastSeenVersion && cfg.lastSeenVersion !== appInfo.version && appInfo.isPrimaryWindow) {
+  const previousVersion = cfg.lastSeenVersion;
+  store('lastSeenVersion', appInfo.version);
+  toast(`AnimeOn обновлён до v${appInfo.version}`, 'info', {
+    body: `Предыдущая версия: v${previousVersion}`,
+    duration: 12000,
+    action: { icon: 'go', title: 'Что нового', onClick: () => window.native.update.open() },
+  });
+} else if (appInfo.version && !cfg.lastSeenVersion) {
+  store('lastSeenVersion', appInfo.version);
+}
+let currentWindowPageTitle = '';
+
+function updateWindowTitle(title = currentWindowPageTitle) {
+  currentWindowPageTitle = String(title || '').trim().slice(0, 120);
+  const mode = ['brand', 'compact', 'page', 'page-only'].includes(cfg.titleDisplay) ? cfg.titleDisplay : 'brand';
+  document.documentElement.dataset.titleDisplay = mode;
+  if (brandPageTitle) brandPageTitle.textContent = currentWindowPageTitle;
+  const nativeTitle = mode === 'page-only' && currentWindowPageTitle
+    ? currentWindowPageTitle
+    : mode === 'page' && currentWindowPageTitle
+      ? `AnimeOn — ${currentWindowPageTitle}`
+      : 'AnimeOn';
+  void window.native.setWindowTitle?.(nativeTitle);
+}
+
+updateWindowTitle();
+wv.addEventListener('page-title-updated', () => {
+  updateWindowTitle(activeWebview.getTitle?.() || '');
+});
+wv.addEventListener('did-stop-loading', () => {
+  updateWindowTitle(activeWebview.getTitle?.() || '');
+});
+titleDisplaySelect.value = cfg.titleDisplay || 'brand';
+syncCustomSelect(titleDisplaySelect);
+titleDisplaySelect.addEventListener('change', () => {
+  store('titleDisplay', titleDisplaySelect.value);
+  updateWindowTitle();
+});
+glassWindowToggle.disabled = appInfo.platform !== 'win32';
+glassWindowToggle.title = glassWindowToggle.disabled ? 'Эффект стекла доступен в Windows 11' : '';
+glassWindowToggle.checked = !!cfg.glassWindow;
+document.documentElement.dataset.glassWindow = String(appInfo.platform === 'win32' && cfg.glassWindow && !cfg.lowPower);
+showSplashToggle.checked = cfg.showSplash !== false;
+showSplashToggle.addEventListener('change', () => store('showSplash', showSplashToggle.checked));
+glassWindowToggle.addEventListener('change', async () => {
+  const result = await window.native.setWindowMaterial(glassWindowToggle.checked);
+  if (!result?.ok) {
+    glassWindowToggle.checked = !glassWindowToggle.checked;
+    toast(result?.error || 'Не удалось изменить материал окна', 'error');
+    return;
+  }
+  store('glassWindow', result.requested);
+  glassWindowToggle.checked = result.requested;
+  document.documentElement.dataset.glassWindow = String(result.enabled);
+  if (result.requested && !result.enabled) toast('Эффект стекла приостановлен в режиме экономии', 'info');
+});
 
 function store(k, v) {
-  if (v === undefined) return cfg[k];
-  cfg[k] = v;
-  window.native.setConfig({ [k]: v });
+  if (v === undefined) return appStore.get(k);
+  return appStore.set(k, v);
 }
+
+function applyEffectsMode(value = cfg.effectMode) {
+  const mode = ['full', 'moderate', 'minimum'].includes(value) ? value : 'full';
+  cfg.effectMode = mode;
+  document.body.dataset.effects = mode;
+  if (updateHost) updateHost.dataset.effects = mode;
+  if (effectsModeSelect) {
+    effectsModeSelect.value = mode;
+    syncCustomSelect(effectsModeSelect);
+  }
+}
+
+applyEffectsMode();
+effectsModeSelect?.addEventListener('change', () => {
+  applyEffectsMode(effectsModeSelect.value);
+  store('effectMode', cfg.effectMode);
+});
 
 const siteAppearance = initSiteAppearance({
   cfg,
@@ -498,98 +533,63 @@ const siteAppearance = initSiteAppearance({
   siteScrollbarsToggle,
 });
 
-function refreshProfiles(){
-  if(!profileSelect) return;
-  const list = profileSelect.root.querySelector('.cselect-list');
-  list.innerHTML = '';
-  Object.keys(cfg.profiles || {}).sort().forEach(name=>{
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.dataset.value = name;
-    b.innerHTML = '<span class="cselect-t"><b></b></span><svg class="cselect-check" viewBox="0 0 24 24"><path d="M5 13l4 4 10-11"/></svg>';
-    b.querySelector('b').textContent = name;
-    list.appendChild(b);
-  });
-  const keep = (cfg.profiles || {})[profileValue] ? profileValue : '';
-  profileValue = keep;
-  const label = profileSelect.root.querySelector('.cselect-label');
-  if (keep) profileSelect.pick(keep);
-  else { profileSelect.root.dataset.value = ''; if (label) { label.textContent = 'Выберите профиль'; label.classList.add('dim'); } }
-}
-
-btnProfileSave?.addEventListener('click',()=>{
-  const name=(styleProfileName?.value||'').trim();
-  if(!name){toast('Введите название профиля','error');return}
-  const key=currentSite==='co'?'co':'cc';
-  if(!cfg.profiles||typeof cfg.profiles!=='object')cfg.profiles={};
-  cfg.profiles[name]={theme:getActiveTheme(),visual:siteAppearance.getVisual(),smoothSite:cfg.smoothSite!==false,showSiteScrollbars:!!cfg.showSiteScrollbars,css:cfg.customCss?.[key]||'',resumeEnabled:cfg.resumeEnabled!==false,autoNext:!!cfg.autoNext,notify:!!cfg.notify,doNotDisturb:!!cfg.doNotDisturb,performance:cfg.performance||'balanced',lowPower:!!cfg.lowPower,memorySaver:!!cfg.memorySaver,autoCacheCleanup:cfg.autoCacheCleanup!==false,cacheLimitMB:Number(cfg.cacheLimitMB)||512,playbackSpeed:Number(cfg.playbackSpeed)||1,hotkeys:{...(cfg.hotkeys||{})}};
-  store('profiles',cfg.profiles);
-  refreshProfiles();
-  profileValue=name;
-  profileSelect?.pick(name);
-  toast('Профиль сохранён');
-});
-btnProfileLoad?.addEventListener('click',()=>{
-  const name=profileValue; const profile=cfg.profiles?.[name];
-  if(!profile){toast('Выберите профиль','error');return}
-  applyTheme(profile.theme||'violet',{skipSave:false});
-  cfg.visual=profile.visual||siteAppearance.getVisual();cfg.smoothSite=profile.smoothSite!==false;cfg.showSiteScrollbars=!!profile.showSiteScrollbars;cfg.resumeEnabled=profile.resumeEnabled!==false;cfg.autoNext=!!profile.autoNext;cfg.notify=!!profile.notify;cfg.doNotDisturb=!!profile.doNotDisturb;cfg.performance=profile.performance||'balanced';cfg.lowPower=!!profile.lowPower;cfg.memorySaver=!!profile.memorySaver;cfg.autoCacheCleanup=profile.autoCacheCleanup!==false;cfg.cacheLimitMB=Number(profile.cacheLimitMB)||512;cfg.playbackSpeed=Number(profile.playbackSpeed)||1;cfg.hotkeys={...(profile.hotkeys||cfg.hotkeys||{})};
-  const key=currentSite==='co'?'co':'cc';
-  if(!cfg.customCss)cfg.customCss={cc:'',co:''};cfg.customCss[key]=profile.css||'';
-  store('visual',cfg.visual);store('smoothSite',cfg.smoothSite);store('showSiteScrollbars',cfg.showSiteScrollbars);store('customCss',cfg.customCss);
-  siteAppearance.syncVisualUI();loadSiteEditor();applyGuestStyles(); if(resumeToggle)resumeToggle.checked=cfg.resumeEnabled!==false;if(autoNextToggle)autoNextToggle.checked=!!cfg.autoNext;if(dndToggle)dndToggle.checked=!!cfg.doNotDisturb;if(notifyAdvancedToggle)notifyAdvancedToggle.checked=!!cfg.notify;if(memorySaverToggle)memorySaverToggle.checked=!!cfg.memorySaver;if(cacheAutoToggle)cacheAutoToggle.checked=cfg.autoCacheCleanup!==false;if(cacheLimit)cacheLimit.value=String(cfg.cacheLimitMB||512);toast('Профиль загружен');
-});
-btnProfileDelete?.addEventListener('click',()=>{
-  const name=profileValue;if(!name||!cfg.profiles?.[name]){toast('Выберите профиль','error');return}
-  delete cfg.profiles[name];store('profiles',cfg.profiles);refreshProfiles();toast('Профиль удалён');
-});
-
 async function applyGuestStyles() {
-  if (!currentSite || !wv) return;
+  if (!currentSite || !wv) return false;
   const key = currentSite || 'cc';
   const custom = cfg.customCss && typeof cfg.customCss === 'object' ? String(cfg.customCss[key] || '') : '';
   const smooth = cfg.smoothSite !== false;
   const css = `${siteAppearance.buildCss()}\n${custom}\n${smooth ? 'html{scroll-behavior:smooth!important;}' : ''}`;
-  try { await window.native.applySiteCss(css); } catch {}
-}
-
-const { applyTheme, getActiveTheme } = initThemeController({ cfg, store, applyGuestStyles, toast, native: window.native });
-
-function activateSite(id, { save = true, updatePicker = true } = {}) {
-  currentSite = id;
-  if (save && rememberPick?.checked) store('site', id);
-  document.querySelectorAll('.st-section [data-site]').forEach((el) => {
-    const on = el.dataset.site === id;
-    el.classList.toggle('selected', on);
-    el.classList.toggle('active', on);
-  });
-  if (updatePicker) {
-    document.querySelectorAll('#site-picker [data-site]').forEach((el) => {
-      const on = el.dataset.site === id;
-      el.classList.toggle('selected', on);
-      el.classList.toggle('active', on);
-    });
+  try {
+    const result = await window.native.applySiteCss(css);
+    if (!result?.ok) throw new Error(result?.error || 'Стили не применены');
+    return true;
+  } catch (error) {
+    console.warn('[AnimeOn] Could not apply site appearance:', error);
+    return false;
   }
-  updateMirrorBtn();
-  loadSiteEditor();
 }
 
-function openSite(id) {
-  const s = SITES[id];
-  if (!s) return;
-  document.body.classList.add('site-content-ready');
-  activateSite(id, { save: false });
-  if (!pageTabs.length) pageTabs = [{ url: s.url, title: s.label }];
-  else pageTabs[activeTab] = { url: s.url, title: s.label };
-  if (!tabWebviews[activeTab]) createTabWebview(activeTab);
-  showTabWebview(activeTab);
-  loadTabUrl(tabWebviews[activeTab], s.url);
-  saveTabs();
-}
+const { applyTheme, getActiveTheme } = initThemeController({
+  cfg,
+  store,
+  applyGuestStyles,
+  toast,
+  native: window.native,
+});
+
+const profileController = createProfileController({
+  cfg,
+  controls: {
+    profileSelect,
+    styleProfileName,
+    saveButton: btnProfileSave,
+    loadButton: btnProfileLoad,
+    deleteButton: btnProfileDelete,
+    notifyToggle: notifyAdvancedToggle,
+    memorySaverToggle,
+    cacheAutoToggle,
+    cacheLimit,
+  },
+  store,
+  toast,
+  getCurrentSite: () => currentSite,
+  getActiveTheme,
+  applyTheme,
+  siteAppearance,
+  appConstants,
+  loadSiteEditor,
+  applyGuestStyles,
+  applyEffectsMode,
+});
+const { refreshProfiles } = profileController;
 
 function loadSiteEditor() {
   if (!siteCssInput) return;
+  void siteAppearance.revertVisualPreview();
   siteAppearance.syncVisualUI();
+  previousAppliedSiteCss = null;
+  if (btnSiteCssRevert) btnSiteCssRevert.disabled = true;
+  setSiteCssStatus('');
   if (smoothScrollToggle) smoothScrollToggle.checked = cfg.smoothSite !== false;
   if (siteScrollbarsToggle) siteScrollbarsToggle.checked = !!cfg.showSiteScrollbars;
   refreshProfiles();
@@ -601,138 +601,123 @@ function loadSiteEditor() {
 btnSiteCssApply?.addEventListener('click', async () => {
   if (!currentSite) return;
   const key = currentSite || 'cc';
+  const css = String(siteCssInput?.value || '');
+  if (css.length > 200000 || !hasBalancedCss(css)) {
+    setSiteCssStatus(css.length > 200000 ? 'CSS слишком большой (максимум 200 КБ).' : 'Проверь скобки и кавычки в CSS.', 'error');
+    return;
+  }
   if (!cfg.customCss || typeof cfg.customCss !== 'object') cfg.customCss = { cc: '', co: '' };
-  cfg.customCss[key] = siteCssInput?.value || '';
+  const previous = String(cfg.customCss[key] || '');
+  cfg.customCss[key] = css;
   store('customCss', cfg.customCss);
-  await applyGuestStyles();
+  const applied = await applyGuestStyles();
+  if (!applied) {
+    cfg.customCss[key] = previous;
+    store('customCss', cfg.customCss);
+    setSiteCssStatus('Не удалось применить стили. Проверьте, что сайт загружен.', 'error');
+    return;
+  }
+  previousAppliedSiteCss = previous;
+  if (btnSiteCssRevert) btnSiteCssRevert.disabled = false;
+  setSiteCssStatus('Стили применены.', 'ok');
   toast('Оформление сайта применено');
+});
+
+function hasBalancedCss(css) {
+  let depth = 0;
+  let quote = '';
+  let escaped = false;
+  let comment = false;
+  for (let index = 0; index < css.length; index += 1) {
+    const char = css[index];
+    const next = css[index + 1];
+    if (comment) {
+      if (char === '*' && next === '/') { comment = false; index += 1; }
+      continue;
+    }
+    if (quote) {
+      if (escaped) escaped = false;
+      else if (char === '\\') escaped = true;
+      else if (char === quote) quote = '';
+      continue;
+    }
+    if (char === '/' && next === '*') { comment = true; index += 1; }
+    else if (char === '"' || char === "'") quote = char;
+    else if (char === '{') depth += 1;
+    else if (char === '}' && --depth < 0) return false;
+  }
+  return !quote && !comment && depth === 0;
+}
+
+function setSiteCssStatus(message, state = '') {
+  if (!siteCssStatus) return;
+  siteCssStatus.textContent = message;
+  if (state) siteCssStatus.dataset.state = state;
+  else delete siteCssStatus.dataset.state;
+}
+
+let previousAppliedSiteCss = null;
+const siteCssSnippets = {
+  rounded: '.anime-card, [class*="card" i] { border-radius: 18px !important; }',
+  compact: '.anime-card, [class*="card" i] { padding: 10px !important; gap: 8px !important; }',
+  'hide-banners': '[class*="banner" i], [class*="promo" i] { display: none !important; }',
+};
+siteCssSnippet?.addEventListener('change', () => {
+  const snippet = siteCssSnippets[siteCssSnippet.value];
+  if (!snippet || !siteCssInput) return;
+  siteCssInput.value = `${siteCssInput.value.trimEnd()}${siteCssInput.value.trim() ? '\n\n' : ''}${snippet}\n`;
+  siteCssSnippet.value = '';
+  syncCustomSelect(siteCssSnippet);
+  siteCssInput.focus();
+  setSiteCssStatus('Сниппет добавлен — нажмите «Применить».');
+});
+siteCssInput?.addEventListener('input', () => setSiteCssStatus('Есть несохранённые изменения.'));
+siteCssInput?.addEventListener('keydown', (event) => {
+  if (event.ctrlKey && event.key === 'Enter') {
+    event.preventDefault();
+    btnSiteCssApply?.click();
+  }
+});
+btnSiteCssRevert?.addEventListener('click', async () => {
+  if (previousAppliedSiteCss === null || !currentSite) return;
+  const key = currentSite;
+  const current = String(cfg.customCss?.[key] || '');
+  cfg.customCss[key] = previousAppliedSiteCss;
+  store('customCss', cfg.customCss);
+  if (siteCssInput) siteCssInput.value = previousAppliedSiteCss;
+  if (!await applyGuestStyles()) {
+    cfg.customCss[key] = current;
+    store('customCss', cfg.customCss);
+    if (siteCssInput) siteCssInput.value = current;
+    setSiteCssStatus('Не удалось откатить стили.', 'error');
+    return;
+  }
+  previousAppliedSiteCss = current;
+  setSiteCssStatus('Предыдущая версия CSS восстановлена.', 'ok');
 });
 
 btnSiteCssReset?.addEventListener('click', async () => {
   if (!currentSite) return;
   const key = currentSite || 'cc';
   if (!cfg.customCss || typeof cfg.customCss !== 'object') cfg.customCss = { cc: '', co: '' };
+  const previous = String(cfg.customCss[key] || '');
   cfg.customCss[key] = '';
   if (siteCssInput) siteCssInput.value = '';
   store('customCss', cfg.customCss);
-  await applyGuestStyles();
+  if (!await applyGuestStyles()) {
+    cfg.customCss[key] = previous;
+    store('customCss', cfg.customCss);
+    if (siteCssInput) siteCssInput.value = previous;
+    setSiteCssStatus('Не удалось сбросить CSS.', 'error');
+    return;
+  }
+  previousAppliedSiteCss = previous;
+  if (btnSiteCssRevert) btnSiteCssRevert.disabled = false;
+  setSiteCssStatus('CSS сброшен.', 'ok');
   toast('Свой CSS сброшен');
 });
 
-function getOtherSiteId() {
-  const keys = Object.keys(SITES);
-  if (keys.length < 2) return keys[0] || 'cc';
-  return keys.find(k => k !== currentSite) || keys[0];
-}
-
-function switchMirror() {
-  const otherId = getOtherSiteId();
-  document.body.classList.add('mirror-switching');
-  setTimeout(() => { store('site', otherId); openSite(otherId); }, 180);
-  setTimeout(() => document.body.classList.remove('mirror-switching'), 520);
-}
-
-function updateMirrorBtn() {
-  if (!currentSite) return;
-  const otherId = getOtherSiteId();
-  btnSite.title = `Сейчас ${SITES[currentSite].label} — переключить на ${SITES[otherId].label}`;
-}
-
-btnSite.addEventListener('click', switchMirror);
-
-document.querySelectorAll('[data-site]').forEach((card) => {
-  card.addEventListener('click', () => {
-    const id = card.dataset.site;
-    if (!SITES[id]) return;
-    activateSite(id);
-    if (picker && picker.isConnected) btnContinue.classList.add('show');
-  });
-});
-document.querySelectorAll('.st-section [data-site]').forEach((card) => {
-  card.addEventListener('click', () => {
-    const id = card.dataset.site;
-    if (!SITES[id]) return;
-    if (card.closest('.settings-group-card')) {
-      store('site', id);
-      openSite(id);
-    }
-  });
-});
-document.querySelectorAll('.about-detail-link[data-url]').forEach((el) => {
-  el.addEventListener('click', () => window.native.openExternal(el.dataset.url));
-});
-
-btnContinue.addEventListener('click', async () => {
-  if (!currentSite) return;
-
-  if (firstLaunchOnboarding) {
-    firstLaunchOnboarding = false;
-    window.__startupOnboarding = false;
-    store('onboardingComplete', true);
-  }
-  store('remember', rememberPick.checked ? '1' : '0');
-  if (rememberPick.checked) store('site', currentSite);
-  else store('site', null);
-
-  let accessStatus;
-  try { accessStatus = await accessKeyFeature.statusPromise; }
-  catch (error) { toast(`Не удалось проверить ключ доступа: ${String(error?.message || error)}`, 'error'); return; }
-  if (!accessStatus?.ok) {
-    toast(accessStatus?.error || 'Не удалось проверить ключ доступа', 'error');
-    return;
-  }
-  if (accessStatus.enabled) await accessKeyFeature.gate;
-  else if (!accessStatus.promptDismissed) {
-    if (!accessKeyFeature.isVisible()) accessKeyFeature.showPrompt('prompt');
-    await accessKeyFeature.gate;
-  } else accessKeyFeature.releaseSecurityGate();
-
-  picker.classList.add('hide');
-  setTimeout(() => {
-    document.body.classList.remove('picker-visible');
-    document.body.classList.remove('onboarding-mode');
-    picker.classList.remove('show');
-    if (pendingPosterUrls) {
-      const urls = pendingPosterUrls;
-      pendingPosterUrls = null;
-      requestAnimationFrame(() => setPosterWall(urls));
-    }
-    openSite(currentSite);
-  }, 140);
-});
-
-function showWelcomeScreen() {
-  if (!firstLaunchOnboarding || !welcomeScreen) return;
-  welcomeScreen.classList.add('show');
-  welcomeScreen.setAttribute('aria-hidden', 'false');
-  document.body.classList.add('onboarding-mode');
-  requestAnimationFrame(() => welcomeContinue?.focus());
-}
-
-welcomeContinue?.addEventListener('click', () => {
-  if (!picker) return;
-  welcomeScreen?.classList.remove('show');
-  welcomeScreen?.setAttribute('aria-hidden', 'true');
-  setTimeout(() => {
-    picker.classList.remove('hide');
-    picker.classList.add('show');
-    document.body.classList.add('picker-visible', 'onboarding-mode');
-    document.querySelector('#site-picker [data-site].selected')?.focus();
-  }, 260);
-});
-
-rememberPick.addEventListener('change', () => {
-  rememberSettings.checked = rememberPick.checked;
-  store('remember', rememberPick.checked ? '1' : '0');
-  if (!rememberPick.checked) store('site', null);
-  else if (currentSite) store('site', currentSite);
-});
-rememberSettings.addEventListener('change', () => {
-  rememberPick.checked = rememberSettings.checked;
-  store('remember', rememberSettings.checked ? '1' : '0');
-  if (!rememberSettings.checked) store('site', null);
-  else if (currentSite) store('site', currentSite);
-});
+splash?.addEventListener('click', () => revealApp(0));
 autostartToggle.addEventListener('change', () => store('autostart', autostartToggle.checked));
 trayToggle.addEventListener('change', () => {
   const enabled = trayToggle.checked;
@@ -746,7 +731,11 @@ trayToggle.addEventListener('change', () => {
 autohideToggle.addEventListener('change', () => { store('autoHide', autohideToggle.checked); setChromeHidden(false); });
 compactToggle.addEventListener('change', () => { store('compact', compactToggle.checked); document.body.classList.toggle('compact-mode', compactToggle.checked); });
 alwaysOnTopToggle?.addEventListener('change', () => window.native.toggleAlwaysOnTop());
-lowPowerToggle.addEventListener('change', () => { store('lowPower', lowPowerToggle.checked); document.body.classList.toggle('low-power', lowPowerToggle.checked || performanceSelect?.value === 'economy'); });
+lowPowerToggle.addEventListener('change', () => {
+  store('lowPower', lowPowerToggle.checked);
+  document.body.classList.toggle('low-power', lowPowerToggle.checked || performanceSelect?.value === 'economy');
+  document.documentElement.dataset.glassWindow = String(appInfo.platform === 'win32' && cfg.glassWindow && !lowPowerToggle.checked);
+});
 autoRecoveryToggle?.addEventListener('change', () => store('autoRecovery', autoRecoveryToggle.checked));
 confirmCloseToggle?.addEventListener('change', () => { const v=confirmCloseToggle.checked; store('confirmClose', v); store('closeBehavior', v ? 'ask' : (store('closeBehavior') === 'ask' ? 'exit' : store('closeBehavior'))); if (closeBehaviorSelect) closeBehaviorSelect.pick(store('closeBehavior') || (v ? 'ask' : 'exit')); });
 
@@ -757,96 +746,6 @@ function applyPerformance(mode) {
 }
 
 btnRestartWebview?.addEventListener('click', () => { hideError(); wv.reload(); });
-const toastIcons = {
-  ok: '<svg viewBox="0 0 24 24"><path d="M4 12.5 9.3 18 20 6"/></svg>',
-  error: '<svg viewBox="0 0 24 24"><path d="M12 3 2.5 20h19z"/><path d="M12 9.5v5"/><circle cx="12" cy="17" r="0.6" fill="currentColor"/></svg>',
-  warning: '<svg viewBox="0 0 24 24"><path d="M12 3 2.5 20h19z"/><path d="M12 9v5"/><circle cx="12" cy="17" r="0.7" fill="currentColor"/></svg>',
-  info: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><circle cx="12" cy="8" r="0.6" fill="currentColor"/></svg>'
-};
-const toastActionIcons = {
-  go: '<svg viewBox="0 0 24 24"><path d="M12 4v10m0 0 4-4m-4 4-4-4M5 19h14"/></svg>',
-  retry: '<svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5"/></svg>'
-};
-function toast(message, type='ok', extra={}) {
-  if (!toastStack) return () => {};
-  const kind = toastIcons[type] ? type : 'ok';
-  const el = document.createElement('div');
-  el.className = `toast ${kind}`;
-  if (extra.variant === 'update') el.classList.add('toast-update');
-  el.setAttribute('role', kind === 'error' ? 'alert' : 'status');
-  el.setAttribute('aria-live', kind === 'error' ? 'assertive' : 'polite');
-  el.innerHTML = '<div class="t-icon">' + toastIcons[kind] + '</div>' +
-    '<div class="t-body"><b></b>' + (extra.body ? '<span></span>' : '') + '</div>' +
-    '<div class="t-side">' +
-    (extra.action ? '<button class="t-action" aria-label="Действие"></button>' : '') +
-    '<button class="t-close">×</button></div>' +
-    '<i class="t-life"></i>';
-  el.querySelector('.t-body b').textContent = message;
-  if (extra.body) el.querySelector('.t-body span').textContent = extra.body;
-  const life = el.querySelector('.t-life');
-  const total = Number(extra.duration) > 0 ? Number(extra.duration) : 3500;
-  let left = total;
-  let hover = false;
-  let dead = false;
-  const actBtn = el.querySelector('.t-action');
-  if (actBtn && extra.action) {
-    actBtn.innerHTML = toastActionIcons[extra.action.icon] || '';
-    actBtn.title = extra.action.title || '';
-    actBtn.addEventListener('click', (e) => { e.stopPropagation(); dismiss(); try { extra.action.onClick && extra.action.onClick(); } catch {} });
-  }
-  el.querySelector('.t-close').addEventListener('click', dismiss);
-  el.addEventListener('mouseenter', () => { hover = true; });
-  el.addEventListener('mouseleave', () => { hover = false; });
-  function dismiss() {
-    if (dead) return;
-    dead = true;
-    clearInterval(timer);
-    el.classList.remove('show');
-    setTimeout(() => el.remove(), 240);
-  }
-  const timer = setInterval(() => {
-    if (hover || dead) return;
-    left -= 50;
-    life.style.width = Math.max(0, (left / total) * 100) + '%';
-    if (left <= 0) dismiss();
-  }, 50);
-  toastStack.appendChild(el);
-  requestAnimationFrame(() => el.classList.add('show'));
-  return dismiss;
-}
-
-function askConfirmation(message, actionLabel = 'Продолжить') {
-  const modal = document.getElementById('action-confirm');
-  const messageElement = document.getElementById('action-confirm-message');
-  const cancel = document.getElementById('action-confirm-cancel');
-  const accept = document.getElementById('action-confirm-accept');
-  if (!modal || !messageElement || !cancel || !accept) return Promise.resolve(false);
-  messageElement.textContent = message;
-  accept.textContent = actionLabel;
-  modal.hidden = false;
-  requestAnimationFrame(() => modal.classList.add('show'));
-  return new Promise((resolve) => {
-    const finish = (confirmed) => {
-      modal.classList.remove('show');
-      modal.hidden = true;
-      cancel.removeEventListener('click', cancelAction);
-      accept.removeEventListener('click', acceptAction);
-      modal.removeEventListener('click', backdropAction);
-      document.removeEventListener('keydown', keyAction);
-      resolve(confirmed);
-    };
-    const cancelAction = () => finish(false);
-    const acceptAction = () => finish(true);
-    const backdropAction = (event) => { if (event.target === modal) finish(false); };
-    const keyAction = (event) => { if (event.key === 'Escape') finish(false); };
-    cancel.addEventListener('click', cancelAction);
-    accept.addEventListener('click', acceptAction);
-    modal.addEventListener('click', backdropAction);
-    document.addEventListener('keydown', keyAction);
-    cancel.focus();
-  });
-}
-
 btnClearCache?.addEventListener('click', async () => {
   btnClearCache.disabled = true;
   const res = await window.native.clearCache();
@@ -900,6 +799,24 @@ btnImportSettings?.addEventListener('click', async () => {
   const hotkeyResult = await hotkeysFeature.applyImported(cfg.hotkeys);
   if (!hotkeyResult?.hotkeys) toast(hotkeyResult?.error || 'Не удалось применить горячие клавиши', 'error');
   applyTheme(cfg.theme || 'violet', { skipSave: true });
+  titleDisplaySelect.value = cfg.titleDisplay || 'brand';
+  syncCustomSelect(titleDisplaySelect);
+  updateWindowTitle();
+  glassWindowToggle.checked = !!cfg.glassWindow;
+  showSplashToggle.checked = cfg.showSplash !== false;
+  document.documentElement.dataset.glassWindow = String(appInfo.platform === 'win32' && cfg.glassWindow && !cfg.lowPower);
+  try {
+    const materialResult = await window.native.setWindowMaterial(!!cfg.glassWindow);
+    document.documentElement.dataset.glassWindow = String(materialResult?.enabled);
+    if (!materialResult?.ok) {
+      cfg.glassWindow = false;
+      glassWindowToggle.checked = false;
+      document.documentElement.dataset.glassWindow = 'false';
+      toast(materialResult?.error || 'Не удалось применить эффект стекла', 'error');
+    }
+  } catch (error) {
+    toast(`Не удалось применить эффект стекла: ${String(error?.message || error)}`, 'error');
+  }
   rememberPick.checked = rememberSettings.checked = cfg.remember === '1';
   autostartToggle.checked = !!cfg.autostart;
   trayToggle.checked = !!cfg.tray;
@@ -925,20 +842,6 @@ btnUpdOpenRelease?.addEventListener('click', () => { if (window.__lastUpdate?.ur
 
 btnResetSettings?.addEventListener('click', async () => { if (!await askConfirmation('Сбросить все настройки AnimeOn?', 'Сбросить настройки')) return; const r=await window.native.resetSettings(); if(!r?.ok){toast(r?.error||'Не удалось сбросить настройки','error');return;} Object.assign(cfg,r.settings||{}); applyTheme('violet',{skipSave:true}); location.reload(); });
 btnDevtools?.addEventListener('click', () => window.native.toggleDevTools());
-btnDiagnostics?.addEventListener('click', async () => {
-  if (!diagnosticsOutput) return;
-  diagnosticsOutput.textContent = 'Собираю данные…';
-  const d = await window.native.diagnostics();
-  diagnosticsOutput.textContent = [
-    `AnimeOn v${d.version}`,
-    `Electron ${d.electron} · Chromium ${d.chrome}`,
-    `Windows ${d.platform} · ${d.arch}`,
-    `Память процесса: ${d.memoryMB} MB`,
-    `Окно: ${d.visible ? 'видно' : 'скрыто'} · ${d.maximized ? 'на весь экран' : 'обычный размер'}`,
-    `GPU: ${d.gpu?.gpu_compositing || 'unknown'}`,
-  ].join('\n');
-});
-
 document.querySelectorAll('.link-row').forEach((l) => {
   l.addEventListener('click', () => window.native.openExternal(l.dataset.url));
 });
@@ -960,48 +863,20 @@ pointerGlowTargets.forEach((b) => {
 });
 
 
-function setVolumeUI(state) {
-  if (!state) return;
-  const volume = Math.max(0, Math.min(200, Number.isFinite(Number(state.volume)) ? Number(state.volume) : 100));
-  if (volumeSlider) {
-    volumeSlider.value = String(volume);
-    volumeSlider.dataset.last = String(volume);
-    volumeSlider.style.setProperty('--volume-fill', `${(volume / 200) * 100}%`);
-  }
-  if (volumeValue) volumeValue.textContent = `${volume}%`;
-  if (btnVolume) { btnVolume.dataset.volume = `${volume}`; btnVolume.classList.toggle('muted', !!state.muted); btnVolume.title = state.muted ? 'Звук выключен' : `Громкость ${volume}%`; }
-  if (volumeMute) volumeMute.textContent = state.muted ? 'Включить звук' : 'Без звука';
-  btnVolume?.classList.toggle('muted', !!state.muted);
-}
-async function refreshVolume() {
-  try { setVolumeUI(await window.native.getVolumeState()); } catch {}
-}
-setVolumeUI({ volume: 100, muted: false });
-function setVolumePanelOpen(open) {
-  const show = Boolean(open);
-  volumePanel?.classList.toggle('show', show);
-  btnVolume?.setAttribute('aria-expanded', String(show));
-  if (show) refreshVolume();
-}
-btnVolume?.addEventListener('pointerdown', (e) => {
-  e.preventDefault();
-  e.stopPropagation();
-  if (!volumePanel) return;
-  setVolumePanelOpen(!volumePanel.classList.contains('show'));
+const volumeControls = createVolumeControls({
+  native: window.native,
+  controls: {
+    volumeSlider,
+    volumeValue,
+    buttonVolume: btnVolume,
+    volumeMute,
+    volumePanel,
+    volumeWrap,
+    volumeMinus,
+    volumePlus,
+  },
 });
-volumePanel?.addEventListener('pointerdown', e => e.stopPropagation());
-document.addEventListener('pointerdown', e => {
-  if (!volumeWrap?.contains(e.target)) setVolumePanelOpen(false);
-});
-volumeSlider?.addEventListener('input', () => {
-  const target = Number(volumeSlider.value);
-  window.native.setVolume(target - Number(volumeSlider.dataset.last || 100));
-  volumeSlider.dataset.last = String(target);
-  setVolumeUI({ volume: target, muted: false });
-});
-volumeMinus?.addEventListener('click', () => { window.native.setVolume(-1); setTimeout(refreshVolume, 50); });
-volumePlus?.addEventListener('click', () => { window.native.setVolume(1); setTimeout(refreshVolume, 50); });
-volumeMute?.addEventListener('click', () => { window.native.toggleMute(); setTimeout(refreshVolume, 50); });
+const { refreshVolume, setVolumePanelOpen } = volumeControls;
 window.native.onAlwaysOnTop?.(v => { if (alwaysOnTopToggle) alwaysOnTopToggle.checked = !!v; toast(v ? 'Режим «Поверх всех окон» включён' : 'Режим «Поверх всех окон» выключен', v ? 'ok' : 'error'); });
 window.native.onToast?.(v => { if (v?.message || v?.title) toast(v.title || v.message, v.type || 'ok', { body: v.body || '' }); });
 window.native.onMediaOverlay?.(v => { if (!mediaOverlay || !mediaOverlayText) return; mediaOverlayText.textContent = v.type === 'seek' ? `${v.value > 0 ? '+' : ''}${v.value} сек.` : `${v.muted ? 'Звук выключен' : `Громкость ${v.value}%`}`; mediaOverlay.classList.remove('show'); void mediaOverlay.offsetWidth; mediaOverlay.classList.add('show'); clearTimeout(window.__mediaOverlayTimer); window.__mediaOverlayTimer = setTimeout(() => mediaOverlay.classList.remove('show'), 850); });
@@ -1016,43 +891,16 @@ hotkeysFeature = initHotkeys({ native: window.native, cfg, toast, askConfirmatio
 
 const { openScreenshots, closeScreenshots } = initScreenshots({ native: window.native, toast });
 
-function initSettingsNavigation() {
-  const discordSection = document.getElementById('discord-status-section');
-  const networkSection = document.querySelector('.settings-group-card[data-settings-group="network"]');
-  if (discordSection && networkSection) networkSection.after(discordSection);
-  const items=()=>Array.from(document.querySelectorAll('#settings-nav-list .settings-nav-item'));
-  const content=document.getElementById('st-content');
-  const accountsSection = document.querySelector('.settings-group-card[data-settings-group="accounts"]');
-  const accessKeySection = document.querySelector('.settings-group-card[data-settings-group="accessKey"]');
-  const screenshotsSection = document.querySelector('.settings-group-card[data-settings-group="screenshots"]');
-  if (accountsSection && accessKeySection) accessKeySection.after(accountsSection);
-  if (screenshotsSection && accountsSection) accountsSection.after(screenshotsSection);
-  if(!items().length) return;
-  const applyFilter=()=>{
-    const btn=items().find(x=>x.classList.contains('active'))||items()[0];
-    const filter=btn.dataset.settingsFilter || 'all';
-    const q=(document.getElementById('settings-search')?.value||'').trim().toLowerCase();
-    document.querySelectorAll('.settings-group-card').forEach(section=>{
-      const okF=filter==='all'||!!q||section.dataset.settingsGroup===filter;
-      const okQ=!q||section.textContent.toLowerCase().includes(q);
-      const visible=okF&&okQ;
-      section.classList.toggle('is-hidden',!visible);
-      if(visible) section.style.removeProperty('display');
-      else section.style.setProperty('display','none','important');
-    });
-    if(content)content.scrollTop=0;
-  };
-  window.__applySettingsFilter = applyFilter;
-  items().forEach(btn=>btn.addEventListener('click',()=>{
-    items().forEach(x=>x.classList.toggle('active',x===btn));
-    applyFilter();
-  }));
-  document.getElementById('settings-search')?.addEventListener('input',applyFilter);
-  applyFilter();
-}
 initSettingsNavigation();
 const settingsSearch=document.getElementById('settings-search');
-if (resumeToggle) { resumeToggle.checked = cfg.resumeEnabled !== false; resumeToggle.addEventListener('change',()=>store('resumeEnabled',resumeToggle.checked)); }
+const playbackControls = createPlaybackControls({
+  native: window.native,
+  cfg,
+  toast,
+  syncSelect: syncCustomSelect,
+  controls: {},
+});
+const { closeSleepTimer, setPlayerSpeed, togglePictureInPicture } = playbackControls;
 const saveTabsToggle=document.getElementById('save-tabs-toggle');
 const restoreLastToggle=document.getElementById('restore-last-toggle');
 if(saveTabsToggle){ saveTabsToggle.checked=cfg.saveTabs!==false; saveTabsToggle.addEventListener('change',()=>store('saveTabs',saveTabsToggle.checked)); }
@@ -1061,7 +909,9 @@ document.getElementById('btn-clear-tabs')?.addEventListener('click',async()=>{
   if(!await askConfirmation('Очистить все вкладки? Останется только стартовая.', 'Очистить вкладки')) return;
   pageTabs=[{url:SITES[store('site')||'co']?.url||SITES.co.url, title:SITES[store('site')||'co']?.label||'AnimeOn'}];
   activeTab=0;
-  if(tabWebviews[0] && tabWebviews[0]!==firstWebview) try{tabWebviews[0].remove()}catch{}
+  if (tabWebviews[0] && tabWebviews[0] !== firstWebview) {
+    try { tabWebviews[0].remove(); } catch { void 0; }
+  }
   tabWebviews.length=1;
   tabWebviews[0]=firstWebview;
   showTabWebview(0);
@@ -1069,38 +919,41 @@ document.getElementById('btn-clear-tabs')?.addEventListener('click',async()=>{
   await saveTabs();
   toast('Вкладки очищены');
 });
-if (autoNextToggle) { autoNextToggle.checked = !!cfg.autoNext; autoNextToggle.addEventListener('change',()=>store('autoNext',autoNextToggle.checked)); }
-if (dndToggle) { dndToggle.checked = !!cfg.doNotDisturb; dndToggle.addEventListener('change',()=>{store('doNotDisturb',dndToggle.checked);updateDndButton();}); }
 if (notifyAdvancedToggle) { notifyAdvancedToggle.checked = !!cfg.notify; notifyAdvancedToggle.addEventListener('change',()=>store('notify',notifyAdvancedToggle.checked)); }
 if (smoothScrollToggle) smoothScrollToggle.checked = cfg.smoothSite !== false;
 if (siteScrollbarsToggle) siteScrollbarsToggle.checked = !!cfg.showSiteScrollbars;
 if (memorySaverToggle) { memorySaverToggle.checked = !!cfg.memorySaver; memorySaverToggle.addEventListener('change',()=>window.native.setMemorySaver(memorySaverToggle.checked)); }
-if (cacheAutoToggle) { cacheAutoToggle.checked = cfg.autoCacheCleanup !== false; cacheAutoToggle.addEventListener('change',()=>window.native.cacheSettings({auto:cacheAutoToggle.checked,limitMB:Number(cacheLimit?.value)||512})); }
-if (cacheLimit) { cacheLimit.value = String(Number(cfg.cacheLimitMB)||512); cacheLimit.addEventListener('change',()=>{let v=Number(cacheLimit.value)||512;v=Math.max(64,Math.min(16384,v));cacheLimit.value=String(v);window.native.cacheSettings({auto:cacheAutoToggle?.checked!==false,limitMB:v});}); }
-async function refreshCacheInfo(){ try { const r=await window.native.cacheInfo(); if(r?.ok && cacheInfoText){ const mb=(Number(r.apiCacheMB)||0)+(Number(r.sessionCacheMB)||0); cacheInfoText.textContent=`Сейчас: ${mb.toFixed(1)} MB`; } } catch {} }
+function parseCacheLimitInput(value) {
+  const text = String(value ?? '').trim();
+  if (text === '∞') return 0;
+  const parsed = Number(text);
+  if (!text || !Number.isFinite(parsed)) return appConstants.defaultCacheLimitMb;
+  return Math.max(64, Math.min(Number.MAX_SAFE_INTEGER, Math.round(parsed)));
+}
+if (cacheAutoToggle) { cacheAutoToggle.checked = cfg.autoCacheCleanup !== false; cacheAutoToggle.addEventListener('change',()=>window.native.cacheSettings({auto:cacheAutoToggle.checked,limitMB:parseCacheLimitInput(cacheLimit?.value)})); }
+if (cacheLimit) {
+  cacheLimit.value = Number(cfg.cacheLimitMB) === 0 ? '∞' : String(Number(cfg.cacheLimitMB) || appConstants.defaultCacheLimitMb);
+  cacheLimit.addEventListener('change',()=>{
+    const limitMB = parseCacheLimitInput(cacheLimit.value);
+    cacheLimit.value = limitMB === 0 ? '∞' : String(limitMB);
+    window.native.cacheSettings({auto:cacheAutoToggle?.checked!==false,limitMB});
+  });
+}
+async function refreshCacheInfo() {
+  try {
+    const result = await window.native.cacheInfo();
+    if (result?.ok && cacheInfoText) {
+      const mb = (Number(result.apiCacheMB) || 0) + (Number(result.sessionCacheMB) || 0);
+      cacheInfoText.textContent = `Сейчас: ${mb.toFixed(1)} MB`;
+    }
+  } catch (error) {
+    console.warn('[AnimeOn] Could not refresh cache information:', error);
+  }
+}
 document.getElementById('btn-cache-refresh')?.addEventListener('click',refreshCacheInfo);
 document.getElementById('btn-cache-clean')?.addEventListener('click',async()=>{const r=await window.native.clearCache();toast(r?.ok?'Кэш очищен':'Не удалось очистить кэш',r?.ok?'ok':'error');refreshCacheInfo();});
 document.getElementById('btn-network-check')?.addEventListener('click',()=>btnConnectionCheck?.click());
-document.getElementById('btn-network-open-log')?.addEventListener('click',async()=>{const r=await window.native.openLogs();if(!r?.ok)toast('Не удалось открыть журнал','error');});
-function initCSelect(id, onChange) {
-  const root = document.getElementById(id);
-  if (!root) return null;
-  const btn = root.querySelector('.cselect-btn');
-  const label = btn.querySelector('.cselect-label');
-  const list = root.querySelector('.cselect-list');
-  function pick(value) {
-    root.dataset.value = value;
-    list.querySelectorAll('button[data-value]').forEach((b) => b.classList.toggle('sel', b.dataset.value === value));
-    const cur = list.querySelector('button[data-value="' + value + '"] .cselect-t b') || list.querySelector('button[data-value="' + value + '"]');
-    if (cur) { label.textContent = cur.textContent; label.classList.remove('dim'); }
-    if (onChange) onChange(value);
-  }
-  btn.addEventListener('click', (e) => { e.stopPropagation(); root.classList.toggle('open'); list.hidden = !root.classList.contains('open'); });
-  list.addEventListener('click', (e) => { const b = e.target.closest('button[data-value]'); if (!b) return; pick(b.dataset.value); root.classList.remove('open'); list.hidden = true; });
-  document.addEventListener('click', (e) => { if (!root.contains(e.target)) { root.classList.remove('open'); list.hidden = true; } });
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { root.classList.remove('open'); list.hidden = true; } });
-  return { pick, root, get value() { return root.dataset.value; } };
-}
+customSelectManager.initialize();
 if (autoMirrorToggle) { autoMirrorToggle.checked = cfg.autoMirror !== false; autoMirrorToggle.addEventListener('change',()=>window.native.netSettingsSet({autoMirror:autoMirrorToggle.checked})); }
 const proxySelect = initCSelect('proxy-select', (v) => { const row = document.getElementById('proxy-custom-row'); if (row) row.hidden = v !== 'custom'; });
 if (proxySelect) proxySelect.pick(cfg.network?.mode || 'system');
@@ -1145,7 +998,16 @@ btnProxyCheck?.addEventListener('click', async () => {
   } catch (e) { if (proxyStatus) { proxyStatus.textContent = String(e?.message || e); proxyStatus.className = 'st-hint pv-err'; } }
   btnProxyCheck.disabled = false;
 });
-async function loadNetStatus(){ try { const r=await window.native.netHealth(); if(r?.ok && r.results){ netMirrorList.textContent=r.results.map(x=>`${x.label}: ${x.ok?'✓':'✗'} ${x.status?`HTTP ${x.status} `:''}${x.ms}ms`).join('\n'); } } catch {} }
+async function loadNetStatus() {
+  try {
+    const result = await window.native.netHealth();
+    if (result?.ok && result.results) {
+      netMirrorList.textContent = result.results.map((item) => `${item.label}: ${item.ok ? '✓' : '✗'} ${item.status ? `HTTP ${item.status} ` : ''}${item.ms}ms`).join('\n');
+    }
+  } catch (error) {
+    console.warn('[AnimeOn] Could not load network status:', error);
+  }
+}
 document.getElementById('btn-network-check')?.addEventListener('click',async()=>{btnConnectionCheck.disabled=true; if(netMirrorList) netMirrorList.textContent='Проверяю сайты…'; const r=await window.native.netHealth(); btnConnectionCheck.disabled=false; if(r?.ok && r.results){ netMirrorList.textContent=r.results.map(x=>`${x.label}: ${x.ok?'✓':'✗'} ${x.status?`HTTP ${x.status} `:''}${x.ms}ms`).join('\n'); toast(r.internet?'Сайты проверены':'Есть недоступные сайты',r.internet?'ok':'error'); } });
 document.getElementById('btn-open-log')?.addEventListener('click',async()=>{const r=await window.native.openLogs();if(!r?.ok)toast('Не удалось открыть журнал','error');});
 document.getElementById('btn-copy-log')?.addEventListener('click',async()=>{const r=await window.native.copyLogs();toast(r?.ok?'Журнал скопирован':'Не удалось скопировать журнал',r?.ok?'ok':'error');});
@@ -1156,27 +1018,17 @@ document.getElementById('btn-about-check-update')?.addEventListener('click', asy
   await refreshUpdateStatus(false, true);
 });
 document.getElementById('btn-about-source')?.addEventListener('click',()=>window.native.openExternal('https://github.com/Neukluziy/animeon-desktop'));
-document.getElementById('btn-reset-positions')?.addEventListener('click',()=>{store('playbackPositions',{});toast('Позиции просмотра очищены');});
-document.getElementById('btn-sleep-timer')?.addEventListener('click',async()=>{const raw=prompt('Через сколько минут остановить видео? Введите 0 для отключения.',String(cfg.sleepTimer?.minutes||0));if(raw===null)return;const m=Math.max(0,Number(raw)||0);const action=m?(prompt('Действие: pause — остановить видео, tray — убрать в трей, exit — закрыть приложение.',cfg.sleepTimer?.action||'pause')||'pause'):'pause';const r=await window.native.setSleepTimer(m,action);toast(r?.enabled?`Таймер установлен на ${m} мин.`:'Таймер сна отключён',r?.enabled?'ok':'error');});
 
-function openFind(){ if(!findBar)return; findBar.hidden=false; findBar.style.display='flex'; findBar.setAttribute('aria-hidden','false'); requestAnimationFrame(()=>{findInput?.focus(); findInput?.select();}); }
-function closeFind(){ if(findBar){findBar.hidden=true;findBar.style.display='none';findBar.setAttribute('aria-hidden','true');findCount.textContent='';} window.native.stopFindInPage?.(); }
-async function doFind(next=false){const q=findInput?.value||'';if(!q)return;try{const r=await window.native.findInPage(q);if(r?.id) findCount.textContent='';}catch{}}
-findInput?.addEventListener('input',()=>doFind(false));
-findInput?.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();doFind(true)}if(e.key==='Escape')closeFind();});
-findPrev?.addEventListener('click',()=>doFind(true)); findNext?.addEventListener('click',()=>doFind(true)); findClose?.addEventListener('click',closeFind);
-window.native.onFindOpen?.(openFind);
-
-closeFind();
-setTimeout(closeFind, 0);
-let pageTabs=[]; let activeTab=0;
-const { tabTitle, toggleTabsSidebar, renderTabs } = initTabsView({
+initFindInPage({ native: window.native });
+let switchTab = () => {};
+let closeTab = () => {};
+const { tabTitle, renderTabs } = initTabsView({
   getPageTabs: () => pageTabs,
   getActiveTab: () => activeTab,
   getActiveWebview: () => activeWebview,
   webview: wv,
-  switchTab,
-  closeTab,
+  switchTab: (...args) => switchTab(...args),
+  closeTab: (...args) => closeTab(...args),
 });
 initAccounts({ native: window.native, cfg, toast, askConfirmation });
 document.getElementById('btn-new-window')?.addEventListener('click', async () => {
@@ -1187,102 +1039,46 @@ document.getElementById('btn-new-window')?.addEventListener('click', async () =>
     toast(error?.message || 'Не удалось создать окно', 'error');
   }
 });
-async function saveTabs(){await window.native.tabsSet(pageTabs,activeTab);renderTabs();}
-function updateSiteFromUrl(url){
-  const value=String(url||'').toLowerCase();
-  for(const [id,site] of Object.entries(SITES)){
-    const host = new URL(site.url).hostname.toLowerCase();
-    if(value.includes(host)){ currentSite=id; break; }
-  }
-  if(currentSite) updateMirrorBtn();
-}
-function isAnimeOnUrl(url){
-  try{
-    const u=new URL(String(url||''));
-    return (u.protocol==='http:'||u.protocol==='https:') && /(^|\.)animeon\.(cc|co)$/i.test(u.hostname);
-  }catch{return false;}
-}
-function samePageUrl(a,b){
-  try{
-    const ua=new URL(String(a||''));
-    const ub=new URL(String(b||''));
-    ua.hash=''; ub.hash='';
-    if(ua.pathname.length>1) ua.pathname=ua.pathname.replace(/\/$/,'');
-    if(ub.pathname.length>1) ub.pathname=ub.pathname.replace(/\/$/,'');
-    return ua.protocol===ub.protocol && ua.hostname.toLowerCase()===ub.hostname.toLowerCase() && ua.port===ub.port && ua.pathname===ub.pathname && ua.search===ub.search;
-  }catch{return String(a||'')===String(b||'');}
-}
-function normalizeTabUrl(url){
-  try{
-    const u=new URL(String(url||''));
-    u.hash='';
-    if(u.pathname.length>1) u.pathname=u.pathname.replace(/\/$/,'');
-    return u.href;
-  }catch{return String(url||'');}
-}
-
 let syncFavoriteButton = () => {};
-function syncActiveTabFromWebview(){
-  if(!pageTabs.length || !activeWebview) return;
-  let url='';
-  try { url=activeWebview.getURL() || ''; } catch {}
-  if(!isAnimeOnUrl(url)) return;
-  updateSiteFromUrl(url);
-  let title='';
-  try { title=activeWebview.getTitle() || ''; } catch {}
-  pageTabs[activeTab]={url,title:title||tabTitle({url})};
-}
-async function switchTab(index){
-  if(index<0 || index>=pageTabs.length || index===activeTab) return;
-  syncActiveTabFromWebview();
-  activeTab=index;
-  if(!tabWebviews[index]){
-    createTabWebview(index);
-    const tab=pageTabs[index];
-    if(tab?.url) loadTabUrl(tabWebviews[index], tab.url);
-  }
-  showTabWebview(index);
-  const tab=pageTabs[index];
-  updateSiteFromUrl(tab?.url);
-  renderTabs();
-  await saveTabs();
-  syncFavoriteButton();
-  setTimeout(()=>{try{activeWebview.focus();updateNav();applyGuestStyles();}catch{}},80);
-}
-async function loadTabUrl(webview, url){
-  if(!webview || !url) return;
-  const target=String(url);
-  const load=()=>{
-    if(!webview.isConnected) return false;
-    try{
-      const current=webview.getURL?.()||'';
-      if(current && current===target) return true;
-    }catch{}
-    try{
-      webview.setAttribute('src', target);
-      return true;
-    }catch{}
-    try{webview.src=target;return true}catch{}
-    try{webview.loadURL(target);return true}catch{}
-    return false;
-  };
-  const attempt=()=>{if(!load())setTimeout(attempt,180)};
-  if(!webview.isConnected){requestAnimationFrame(()=>setTimeout(attempt,80));return;}
-  requestAnimationFrame(()=>setTimeout(attempt,80));
-}
-async function loadActiveTab(){
-  if(!pageTabs.length) pageTabs=[{url:SITES.co.url,title:SITES.co.label}];
-  if(!tabWebviews[activeTab]) createTabWebview(activeTab);
-  showTabWebview(activeTab);
-  const tab=pageTabs[activeTab];
-  loadTabUrl(tabWebviews[activeTab], tab?.url);
-  renderTabs();
-}
-async function syncTabs(url,title){
-  if(!isAnimeOnUrl(url))return;
-  if(!pageTabs.length) pageTabs=[{url,title}];
-  else pageTabs[activeTab]={url,title:title||tabTitle({url})};
-  await saveTabs();
+const tabController = initTabController({
+  state: {
+    get pageTabs() { return pageTabs; },
+    set pageTabs(value) { pageTabs = value; },
+    get activeTab() { return activeTab; },
+    set activeTab(value) { activeTab = value; },
+    get activeWebview() { return activeWebview; },
+    get currentSite() { return currentSite; },
+    set currentSite(value) { currentSite = value; },
+    get tabWebviews() { return tabWebviews; },
+    get firstWebview() { return firstWebview; },
+    syncFavoriteButton: () => syncFavoriteButton(),
+  },
+  sites: SITES,
+  appConstants,
+  mediaStates,
+  inactiveTabUnloadTimers,
+  native: window.native,
+  tabTitle,
+  updateMirrorBtn,
+  createTabWebview,
+  showTabWebview,
+  renderTabs,
+  updateNav,
+  applyGuestStyles,
+});
+const {
+  isAnimeOnUrl,
+  normalizeTabUrl,
+  samePageUrl,
+  syncActiveTabFromWebview,
+  updateSiteFromUrl,
+} = tabController;
+switchTab = tabController.switchTab;
+closeTab = tabController.closeTab;
+try {
+  applySiteList(cfg.siteList);
+} catch (error) {
+  console.warn('[AnimeOn] Could not apply saved site list:', error);
 }
 function updateDndButton(){
   if(!btnDnd)return;
@@ -1351,31 +1147,8 @@ btnNewTab?.addEventListener('click',async()=>{
   }catch(e){console.error('[AnimeOn] new tab error',e);toast('Не удалось создать вкладку','error');}
 });
 window.native.onTabsCycle?.(delta=>{if(!pageTabs.length)return;switchTab((activeTab+Number(delta||1)+pageTabs.length)%pageTabs.length);});
-async function closeTab(index){
-  if(pageTabs.length<=1){
-    const only=pageTabs[0]||{url:SITES.co.url,title:SITES.co.label};
-    pageTabs=[only];
-    activeTab=0;
-    if(!tabWebviews[0]) tabWebviews[0]=firstWebview;
-    showTabWebview(0);
-    renderTabs();
-    return;
-  }
-  const closingWebview=tabWebviews[index];
-  pageTabs.splice(index,1);
-  tabWebviews.splice(index,1);
-  if(closingWebview && closingWebview!==firstWebview) {
-    try{closingWebview.remove();}catch{}
-  }
-  if(activeTab>index) activeTab--;
-  else if(activeTab===index) activeTab=Math.min(activeTab,pageTabs.length-1);
-  showTabWebview(activeTab);
-  await saveTabs();
-  setTimeout(()=>{try{activeWebview.focus();updateNav();applyGuestStyles();}catch{}},50);
-}
 (async()=>{
   try{
-    await remoteSitesReady;
     const selectedId=SITES[store('site')] ? store('site') : 'co';
     currentSite=selectedId;
     const selected=SITES[selectedId];
@@ -1383,15 +1156,19 @@ async function closeTab(index){
     const saveOn=cfg.saveTabs!==false;
     const restoreOn=cfg.restoreLastTab!==false;
     if(saveOn && savedTabs && savedTabs.length){
-      pageTabs=savedTabs.map(t=>({url:String(t.url||selected.url), title:String(t.title||t.url||selected.label)}));
+      pageTabs=savedTabs.map(t=>({url:String(t.url||selected.url), title:String(t.title||t.url||selected.label), pinned:t.pinned===true}));
       activeTab=restoreOn && Number.isInteger(cfg.activeTab) ? Math.max(0, Math.min(cfg.activeTab, pageTabs.length-1)) : 0;
-      try{ updateSiteFromUrl(pageTabs[activeTab]?.url||selected.url); }catch{}
+      try {
+        updateSiteFromUrl(pageTabs[activeTab]?.url || selected.url);
+      } catch (error) {
+        console.warn('[AnimeOn] Could not restore the selected site for saved tabs:', error);
+      }
     } else {
       pageTabs=[{url:selected.url,title:selected.label}];
       activeTab=0;
     }
     if(!tabWebviews[0]) tabWebviews[0]=firstWebview;
-    pageTabs.forEach((tab,i)=>{ if(!tabWebviews[i]) createTabWebview(i); });
+    if(!tabWebviews[activeTab]) createTabWebview(activeTab);
     showTabWebview(activeTab);
     renderTabs();
     await accessKeyFeature.gate;
@@ -1399,16 +1176,15 @@ async function closeTab(index){
     if (!firstLaunchOnboarding) {
       const activeUrl=pageTabs[activeTab]?.url||selected.url;
       if(tabWebviews[activeTab]) loadTabUrl(tabWebviews[activeTab], activeUrl);
-      pageTabs.forEach((tab,i)=>{ if(i!==activeTab && tabWebviews[i]) loadTabUrl(tabWebviews[i], tab.url); });
     }
     await window.native.tabsSet(pageTabs,activeTab);
     updateMirrorBtn();
-  }catch{
+  } catch (error) {
+    console.warn('[AnimeOn] Could not restore saved tabs; opening the default site:', error);
     currentSite='co';
     pageTabs=[{url:SITES.co.url,title:SITES.co.label}];
     activeTab=0;
     if(!tabWebviews[0]) tabWebviews[0]=firstWebview;
-    pageTabs.forEach((tab,i)=>{ if(!tabWebviews[i]) createTabWebview(i); });
     showTabWebview(0);
     renderTabs();
     await accessKeyFeature.gate;
@@ -1418,6 +1194,7 @@ async function closeTab(index){
 })();
 
 function closeSettings() {
+  void siteAppearance.revertVisualPreview();
   settingsOverlay.classList.remove('show');
   btnSettings.classList.remove('open');
   if(settingsSearch){settingsSearch.value='';window.__applySettingsFilter?.();}
@@ -1435,13 +1212,12 @@ window.native.onOpenSettings(openSettings);
 window.native.onConfirmClose?.(() => confirmScreen?.classList.add('show'));
 confirmYes?.addEventListener('click', () => { confirmScreen?.classList.remove('show'); window.native.confirmClose(true); });
 confirmNo?.addEventListener('click', () => confirmScreen?.classList.remove('show'));
-offlineRetry?.addEventListener('click', () => { hideError(); wv.reload(); });
 
 function updateNav() {
   try {
     btnBack.disabled = !wv.canGoBack();
     btnFwd.disabled = !wv.canGoForward();
-  } catch {}
+  } catch { void 0; }
 }
 
 function rememberPage(url) {
@@ -1453,17 +1229,23 @@ function rememberPage(url) {
   cfg.history = next;
   if (pageTabs.length) {
     let title='';
-    try { title = activeWebview.getTitle() || document.title || ''; } catch {}
+    try { title = activeWebview.getTitle() || document.title || ''; } catch { void 0; }
     const prevUrl = pageTabs[activeTab]?.url || '';
     if (prevUrl !== normalized || (title && pageTabs[activeTab]?.title !== title)) {
-      pageTabs[activeTab] = { url:normalized, title:title || tabTitle({url:normalized}) };
-      try{ updateSiteFromUrl(normalized); }catch{}
+      pageTabs[activeTab] = { ...pageTabs[activeTab], url:normalized, title:title || tabTitle({url:normalized}) };
+      try {
+        updateSiteFromUrl(normalized);
+      } catch (error) {
+        console.warn('[AnimeOn] Could not update the current site from navigation:', error);
+      }
       saveTabs();
       renderTabs();
     }
   }
   window.native.setConfig({ lastUrl: cfg.lastUrl, history: cfg.history });
-  window.native.recentPageAdd?.({url:normalized,title:tabTitle({url:normalized})}).catch?.(()=>{});
+  window.native.recentPageAdd?.({ url: normalized, title: tabTitle({ url: normalized }) }).catch?.((error) => {
+    console.warn('[AnimeOn] Could not save the recent page:', error);
+  });
   syncFavoriteButton();
 }
 
@@ -1478,94 +1260,24 @@ wv?.addEventListener('dom-ready', () => {
 
 
 
-function escapeHtml(value) {
-  return String(value ?? '').replace(/[&<>"']/g, ch => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[ch]));
-}
-
-const commands = [
-  ['Скорость 1×', () => { currentPlayerSpeed = 1; window.native.setPlaybackSpeed(1); renderPlayerSpeed(); }],
-  ['Скорость 2×', () => { currentPlayerSpeed = 2; window.native.setPlaybackSpeed(2); renderPlayerSpeed(); }],
-  ['Громче', () => { window.native.setVolume(1); setTimeout(refreshVolume, 50); }],
-  ['Тише', () => { window.native.setVolume(-1); setTimeout(refreshVolume, 50); }],
-  ['Выключить / включить звук', () => { window.native.toggleMute(); setTimeout(refreshVolume, 50); }],
-  ['10 секунд назад', () => window.native.seek(-10)],
-  ['10 секунд вперёд', () => window.native.seek(10)],
-  ['Следующая серия', () => window.native.mediaAction('next')],
-  ['Открыть предыдущий / следующий сайт', () => { openSite(getOtherSiteId()); }],
-  ['animeon.cc', () => openSite('cc')],
-  ['v1.animeon.co', () => openSite('co')],
-  ['Предыдущая серия', () => window.native.mediaAction('previous')],
-  ['Сделать скриншот', () => window.native.takeScreenshot()],
-  ['Поверх всех окон', () => window.native.toggleAlwaysOnTop()],
-  ['Открыть меню трея', () => window.native.trayAction('menu')],
-  ['Перезагрузить страницу', () => wv.reload()],
-  ['Назад', () => wv.canGo() && wv.goBack()],
-  ['Вперёд', () => wv.canGoForward() && wv.goForward()],
-  ['Полный экран', () => window.native.toggleFullscreen()],
-  ['Настройки', () => openSettings()],
-  ['Перезапустить WebView', () => wv.reload()],
-  ['Очистить кэш', async () => { await window.native.clearCache(); wv.reload(); }],
-  ['DevTools', () => window.native.toggleDevTools()],
-  ['Проверить всё', () => document.getElementById('btn-check-all')?.click()],
-  ['Показать нагрузку', async () => { const r = await window.native.siteMemory(); if (r?.ok) toast(`Память: приложение ${r.appMB} МБ · сайт ${r.siteMB} МБ`); else toast('Не удалось получить нагрузку', 'error'); }],
-  ['Открыть в браузере', () => window.native.openExternal(wv.getURL())],
-  ['Увеличить масштаб', () => window.native.zoom(0.1)],
-  ['Уменьшить масштаб', () => window.native.zoom(-0.1)],
-  ['Сбросить масштаб', () => window.native.zoom(0)],
-  ['Каталог', () => navigatePath('/anime')],
-  ['Расписание', () => navigatePath('/schedule')],
-  ['Подборки', () => navigatePath('/collections')],
-  ['Случайное аниме', () => navigatePath('/random')],
-  ['Новости', () => navigatePath('/news')],
-  ['Обновления', () => navigatePath('/roadmap')],
-  ['Лидерборд', () => navigatePath('/leaderboard')],
-  ['Добавить в избранное', () => toggleFavorite()],
-  ['Открыть последнюю страницу', () => { if (cfg.lastUrl) window.native.navigateSite(cfg.lastUrl); }],
-];
-
-function navigatePath(path) {
-  const base = SITES[currentSite || 'cc']?.url || SITES.cc.url;
-  window.native.navigateSite(new URL(path, base).href);
-}
-
-function toggleFavorite() {
-  const url = wv.getURL();
-  if (!/^https:\/\/(?:www\.)?animeon\.(?:cc|co)\//i.test(url)) return;
-  const list = Array.isArray(cfg.favorites) ? cfg.favorites : [];
-  const i = list.indexOf(url);
-  if (i >= 0) { list.splice(i,1); toast('Убрано из избранного'); } else { list.unshift(url); toast('Добавлено в избранное'); }
-  cfg.favorites = list.slice(0,50); store('favorites', cfg.favorites);
-}
-
-
-function renderCommands(filter = '') {
-  if (!commandList) return;
-  const q = filter.trim().toLowerCase();
-  commandList.innerHTML = '';
-  commands.filter(([name]) => !q || name.toLowerCase().includes(q)).forEach(([name, fn], i) => {
-    const b = document.createElement('button');
-    b.textContent = name;
-    b.dataset.index = String(i);
-    b.addEventListener('click', () => { commandPalette.classList.remove('show'); fn(); });
-    commandList.appendChild(b);
-  });
-}
-window.native.onOpenCommandPalette?.(() => openCommandPalette());
-window.native.onGoHome?.(() => { if (currentSite) openSite(currentSite); });
-window.native.onSwitchSite?.(() => { openSite(getOtherSiteId()); });
-function openCommandPalette() {
-  if (!commandPalette) return;
-  commandPalette.classList.add('show');
-  commandInput.value = '';
-  renderCommands();
-  setTimeout(() => commandInput.focus(), 20);
-}
-commandInput?.addEventListener('input', () => renderCommands(commandInput.value));
-commandPalette?.addEventListener('click', e => { if (e.target === commandPalette) commandPalette.classList.remove('show'); });
+const commandPaletteFeature = initCommandPalette({
+  native: window.native,
+  cfg,
+  sites: SITES,
+  webview: wv,
+  toast,
+  setPlayerSpeed,
+  togglePictureInPicture,
+  refreshVolume,
+  openSite,
+  getOtherSiteId,
+  getCurrentSite: () => currentSite,
+  openSettings,
+});
 
 window.addEventListener('keydown', (e) => {
-  if (e.ctrlKey && e.key.toLowerCase() === 'k') { e.preventDefault(); openCommandPalette(); return; }
-  if (e.key === 'Escape') { setVolumePanelOpen(false); commandPalette?.classList.remove('show'); hotkeysFeature.closeHotkeys(); closeScreenshots(); closeSettings(); watchNotesModal?.classList.remove('show'); hideError(); confirmScreen?.classList.remove('show'); return; }
+  if (e.ctrlKey && e.key.toLowerCase() === 'k') { e.preventDefault(); commandPaletteFeature.openCommandPalette(); return; }
+  if (e.key === 'Escape') { closeSleepTimer(); setVolumePanelOpen(false); commandPaletteFeature.closeCommandPalette(); hotkeysFeature.closeHotkeys(); closeScreenshots(); closeSettings(); watchNotesModal?.classList.remove('show'); hideError(); confirmScreen?.classList.remove('show'); return; }
   if (e.key === 'F11') {
     e.preventDefault();
     window.native.toggleFullscreen();
@@ -1592,55 +1304,19 @@ window.addEventListener('keydown', (e) => {
   if (e.altKey && e.key === 'ArrowRight') { e.preventDefault(); wv.goForward(); }
 });
 
-let progVal = 5;
-let progTarget = 5;
-let progFrame = 0;
-
-function setProg(p) {
-  const value = Number.isFinite(Number(p)) ? Math.max(0, Math.min(100, Number(p))) : progVal;
-  progVal = value;
-  if (splashBarFill) splashBarFill.style.width = value + '%';
-  if (splashPct) splashPct.textContent = Math.round(value) + '%';
-  splash?.style.setProperty('--p', (value / 100).toFixed(3));
-}
-
-function animateProgress(target) {
-  const value = Number.isFinite(Number(target)) ? Math.max(0, Math.min(100, Number(target))) : progTarget;
-  progTarget = Math.max(progTarget, value);
-  cancelAnimationFrame(progFrame);
-  const tick = () => {
-    const diff = progTarget - progVal;
-    if (diff <= 0.05) { setProg(progTarget); return; }
-    setProg(progVal + Math.max(.12, diff * .08));
-    progFrame = requestAnimationFrame(tick);
-  };
-  progFrame = requestAnimationFrame(tick);
-}
-
-function startSplashProgress() {
-  __splashFallback?.takeOver();
-  setProg(5);
-  animateProgress(12);
-}
-
-function finishSplashProgress() {
-  progTarget = 100;
-  animateProgress(100);
-}
-
-function revealApp(delay = 220) {
-  if (booted) return;
-  finishSplashProgress();
-  setTimeout(() => {
-    booted = true;
-    document.body.classList.add('loaded');
-    splash?.classList.add('hide');
-    showWelcomeScreen();
-    setTimeout(() => {
-      splash?.remove();
-    }, 720);
-  }, delay);
-}
+const splashFeature = initSplash({
+  splash,
+  progressBar: splashBarFill,
+  percentLabel: splashPct,
+  fallback: __splashFallback,
+  state: {
+    get booted() { return booted; },
+    set booted(value) { booted = value; },
+  },
+  showWelcomeScreen,
+});
+const { animateProgress, revealApp: revealSplashApp, startSplashProgress } = splashFeature;
+revealApp = revealSplashApp;
 
 if (firstLaunchOnboarding) revealApp(0);
 
@@ -1648,7 +1324,7 @@ wv.addEventListener('did-start-loading', () => {
   animateProgress(18);
   document.body.classList.remove('page-ready');
   document.body.classList.add('page-soft-loading');
-  progress.classList.add('active');
+  progress?.classList.add('active');
   hideError();
   window.native.setTaskbarProgress?.(0.08);
 });
@@ -1666,7 +1342,7 @@ wv.addEventListener('dom-ready', () => {
 
 wv.addEventListener('did-stop-loading', () => {
   animateProgress(100);
-  progress.classList.remove('active');
+  progress?.classList.remove('active');
   updateNav();
   window.native.setTaskbarProgress?.(1);
   setTimeout(() => window.native.setTaskbarProgress?.(-1), 350);
@@ -1677,7 +1353,7 @@ wv.addEventListener('did-stop-loading', () => {
 let autoMirrorCooldown = 0;
 let autoMirrorAttempts = 0;
 wv.addEventListener('did-fail-load', (e) => {
-  if (e.errorCode === -3) return;
+  if (e.errorCode === -3 || e.isMainFrame === false) return;
   window.native.setTaskbarProgress?.(-1);
   const now = Date.now();
   const autoMirror = cfg.autoMirror !== false;
@@ -1688,39 +1364,33 @@ wv.addEventListener('did-fail-load', (e) => {
     const otherId = getOtherSiteId();
     if (otherId && otherId !== currentSite) { switchMirror(); return; }
   }
-  showError('Не удалось открыть сайт. Попробуй ещё раз или переключись на другой.');
+  const description = String(e.errorDescription || '').toLowerCase();
+  const reason = /internet_disconnected/.test(description)
+    ? 'Нет подключения к интернету.'
+    : /name_not_resolved|dns/.test(description)
+      ? 'Не удалось найти адрес сайта (ошибка DNS).'
+      : /proxy/.test(description)
+        ? 'Не удалось подключиться через прокси. Проверьте его настройки.'
+        : /blocked|access_denied/.test(description)
+          ? 'Подключение заблокировано сетью или защитной программой.'
+          : 'Сайт недоступен или соединение прервано.';
+  showError(`${reason} Попробуй ещё раз, запусти диагностику или переключись на другой сайт.`);
 });
 
-setTimeout(() => revealApp(100), 15000);
+setTimeout(() => revealApp(100), appConstants.appRevealFallbackDelayMs);
 
 let lastScrollY = 0;
-let chromeTimer = null;
-function setChromeHidden(hidden) { document.body.classList.toggle('chrome-hidden', hidden); }
-window.addEventListener('mousemove', (e) => {
-  if (e.clientY <= 7) setChromeHidden(false);
+const { setChromeHidden } = initWindowVisibility({ native: window.native, updateHost });
+
+const { hideError, showError } = initErrorScreen({
+  native: window.native,
+  appInfo,
+  webview: wv,
+  toast,
+  openSettings,
+  switchMirror,
+  diagnosticsOutput,
 });
-setInterval(async () => {
-  if (!cfg.autoHide || !booted || picker?.classList.contains('show') || settingsOverlay?.classList.contains('show')) return;
-  try {
-    const y = await wv.executeJavaScript('Math.max(0, window.scrollY || document.documentElement.scrollTop || 0)', false);
-    if (y > lastScrollY + 8) setChromeHidden(true);
-    else if (y < lastScrollY - 8) setChromeHidden(false);
-    lastScrollY = y;
-  } catch {}
-}, 1200);
-
-function showError(msg) {
-  if (errorMessage) errorMessage.textContent = msg || 'Не получилось открыть AnimeOn.';
-  errorScreen?.classList.add('show');
-  document.body.classList.add('error-visible', 'offline-visible');
-  offlineScreen?.classList.add('show');
-  window.native.taskbarOverlay?.('error');
-}
-function hideError() { errorScreen?.classList.remove('show'); offlineScreen?.classList.remove('show'); document.body.classList.remove('error-visible', 'offline-visible'); window.native.taskbarOverlay?.('none'); }
-btnErrorRetry?.addEventListener('click', () => { hideError(); wv.reload(); });
-btnErrorMirror?.addEventListener('click', () => { hideError(); switchMirror(); });
-
-let pendingPosterUrls = null;
 
 function setPosterWall(urls) {
   if (!posterWall) return;
@@ -1740,74 +1410,35 @@ function setPosterWall(urls) {
   });
 }
 window.native.onMirrorPosters?.((urls) => setPosterWall(urls || []));
-window.native.onLoadProgress?.((p) => {
-
-window.native.onNetStatus?.((data) => { if (data?.results) { netMirrorList.textContent = data.results.map(x => `${x.label}: ${x.ok?'✓':'✗'} ${x.status?`HTTP ${x.status} `:''}${x.ms}ms`).join('\n'); } });
-window.native.onRestartWebview?.(() => { try { wv.reload(); } catch {} });
-  try { window.native.setTaskbarProgress?.(p); } catch {}
+window.native.onLoadProgress?.((progress) => {
+  try {
+    window.native.setTaskbarProgress?.(progress);
+  } catch (error) {
+    console.warn('[AnimeOn] Could not update taskbar loading progress:', error);
+  }
 });
 
-
-window.native.onRestartWebview?.(() => { try { wv.reload(); } catch {} });
-
-let checkingUpdate = false;
-let notifiedUpdateVersion = null;
-
-function notifyUpdateAvailable(info) {
-  if (!info?.hasUpdate || notifiedUpdateVersion === info.latest) return;
-  notifiedUpdateVersion = info.latest;
-  toast('Доступна новая версия AnimeOn', 'ok', {
-    variant: 'update',
-    body: `Версия v${info.latest} уже доступна`,
-    duration: 12000,
-    action: {
-      icon: 'go',
-      title: 'Открыть обновление',
-      onClick: () => window.native.updOpen(),
-    },
-  });
-}
-
-async function refreshUpdateStatus(auto = false, showResultToast = false) {
-  if (checkingUpdate || (auto && (cfg.autoUpdate === false || !appInfo.isPrimaryWindow))) return;
-  checkingUpdate = true;
-  if (!auto) updStatus.textContent = 'Проверяем…';
-  const checkButtons = [btnUpdCheck, document.getElementById('btn-about-check-update')].filter(Boolean);
-  checkButtons.forEach((button) => { button.disabled = true; });
-  btnUpdOpenRelease?.classList.add('hidden');
-
-  try {
-    const res = await window.native.checkUpdate();
-
-    window.__lastUpdate = res;
-    if (!res || !res.ok) {
-      updStatus.textContent = auto
-        ? ''
-        : 'Не удалось проверить обновления. Проверь подключение к интернету';
-      if (showResultToast) toast(`Не удалось проверить: ${res?.reason || 'неизвестная ошибка'}`, 'error');
-    } else if (res.hasUpdate) {
-      updStatus.textContent = `Свежая версия — v${res.latest} (у тебя v${res.current})`;
-      btnUpdGet.classList.remove('hidden');
-      btnUpdGet.onclick = () => window.native.updOpen();
-      if (btnUpdOpenRelease && res.url) { btnUpdOpenRelease.classList.remove('hidden'); }
-      if (auto) notifyUpdateAvailable(res);
-      else window.native.updOpen();
-    } else {
-      updStatus.textContent = `У вас последняя версия — v${res.current}`;
-      btnUpdGet.classList.add('hidden');
-      if (showResultToast) toast('Обновлений нет');
-    }
-  } catch (error) {
-    console.error('[AnimeOn] Не удалось проверить обновления:', error);
-    if (!auto) updStatus.textContent = 'Не удалось проверить обновления. Проверь подключение к интернету';
-    if (showResultToast) toast('Не удалось проверить обновления', 'error');
-  } finally {
-    checkButtons.forEach((button) => { button.disabled = false; });
-    checkingUpdate = false;
+window.native.onNetStatus?.((data) => {
+  if (data?.results && netMirrorList) {
+    netMirrorList.textContent = data.results.map((item) => `${item.label}: ${item.ok ? '✓' : '✗'} ${item.status ? `HTTP ${item.status} ` : ''}${item.ms}ms`).join('\n');
   }
-}
+});
+window.native.onRestartWebview?.(() => {
+  try { wv.reload(); } catch (error) {
+    console.warn('[AnimeOn] Could not restart the site webview:', error);
+  }
+});
 
-btnUpdCheck.addEventListener('click', () => refreshUpdateStatus(false));
+const { refreshUpdateStatus } = initUpdateStatus({
+  native: window.native,
+  cfg,
+  appInfo,
+  toast,
+  status: updStatus,
+  checkButton: btnUpdCheck,
+  openReleaseButton: btnUpdOpenRelease,
+  getButton: btnUpdGet,
+});
 
 applyTheme(store('theme') || 'violet', { skipSave: true });
 rememberPick.checked = rememberSettings.checked = store('remember') === '1';
@@ -1835,7 +1466,7 @@ try {
   siteAppearance.syncVisualUI();
   refreshProfiles();
 } catch (e) {
-  try { console.error('[AnimeOn] startup init error', e); } catch {}
+  console.error('[AnimeOn] startup init error', e);
 }
 
 startSplashProgress();
@@ -1853,11 +1484,25 @@ try {
   }
   setTimeout(() => { if (!booted) revealApp(0); }, 650);
 } catch (e) {
-  try { console.error('[AnimeOn] site open error', e); } catch {}
-  try { revealApp(0); } catch {}
+  console.error('[AnimeOn] site open error', e);
+  try { revealApp(0); } catch (error) {
+    console.error('[AnimeOn] Could not reveal the app after site startup failed:', error);
+  }
 }
 
-setTimeout(() => refreshUpdateStatus(true), 2500);
+function scheduleDeferredStartupChecks() {
+  const delay = Number(appConstants.startupBackgroundCheckDelayMs) || 7000;
+  setTimeout(async () => {
+    if (mediaStates.get(activeWebview)?.playing) {
+      scheduleDeferredStartupChecks();
+      return;
+    }
+    await loadSitesFromRemote();
+    if (!mediaStates.get(activeWebview)?.playing) await refreshUpdateStatus(true);
+    else scheduleDeferredStartupChecks();
+  }, delay);
+}
+scheduleDeferredStartupChecks();
 
 initLocalTools({ native: window.native, cfg, toast });
 
@@ -1874,7 +1519,9 @@ async function pollAnimeNotifications() {
     lastNotificationSignature = signature;
     if (!previousSignature) return;
     toast(first.title || first.message || 'Новое уведомление');
-  } catch {}
+  } catch (error) {
+    console.warn('[AnimeOn] Could not poll AnimeOn notifications:', error);
+  }
 }
-setTimeout(pollAnimeNotifications,12000);
-setInterval(pollAnimeNotifications,300000);
+setTimeout(pollAnimeNotifications,appConstants.notificationInitialPollDelayMs);
+setInterval(pollAnimeNotifications,appConstants.notificationPollIntervalMs);

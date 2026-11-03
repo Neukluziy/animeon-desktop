@@ -1,7 +1,11 @@
+const { sanitizeConfigPatch } = require('../shared/config-schema');
+const { writeFileAtomically } = require('./persistence');
+
 function createSettingsIpc({
   ipcMain,
   app,
   config,
+  configDefaults,
   dialog,
   fs,
   path,
@@ -14,6 +18,7 @@ function createSettingsIpc({
   getWindowSiteContents,
   getAllSiteContents,
   saveConfig,
+  writeLog,
   applySideEffects,
   applyDiscordRpcRuntime,
   normalizePageUrl,
@@ -22,12 +27,11 @@ function createSettingsIpc({
   setSleepTimer,
   logPath,
   screenshotsDir,
-  apiHealth,
   apiBase,
   apiVersion,
   discordDefaults,
 }) {
-  const exportKeys = ['theme','custom','site','siteList','remember','notify','autostart','tray','compact','confirmClose','autoRecovery','performance','lowPower','autoHide','closeBehavior','alwaysOnTop','hotkeys','customCss','smoothSite','showSiteScrollbars','visual','profiles','lastUrl','history','favorites','api','playbackPositions','playbackSpeed','library','resumeEnabled','autoNext','recentPages','pageFavorites','tabs','activeTab','tabsFixedV2','doNotDisturb','sleepTimer','autoCacheCleanup','cacheLimitMB','errorLog','memorySaver','startupPolicyFixed','discordRpc'];
+  const exportKeys = ['theme','custom','site','siteList','remember','notify','autostart','tray','compact','confirmClose','autoRecovery','performance','effectMode','lowPower','autoHide','closeBehavior','alwaysOnTop','hotkeys','customCss','smoothSite','showSiteScrollbars','visual','profiles','lastUrl','history','favorites','api','playbackPositions','playbackSpeed','library','resumeEnabled','autoNext','recentPages','pageFavorites','tabs','activeTab','tabsFixedV2','doNotDisturb','sleepTimer','autoCacheCleanup','cacheLimitMB','errorLog','memorySaver','startupPolicyFixed','discordRpc'];
   const activeSiteSession = (event) => {
     const siteContents = getWindowSiteContents?.(event) || getSiteContents();
     return siteContents && !siteContents.isDestroyed()
@@ -60,7 +64,9 @@ function createSettingsIpc({
         const pid = wc?.getOSProcessId?.();
         const metric = pid ? app.getAppMetrics().find((item) => item.pid === pid) : null;
         webviewMemoryMB = metric?.memory?.workingSetSize ? Math.round(metric.memory.workingSetSize / 1024) : 0;
-      } catch {}
+      } catch (error) {
+        writeLog('debug', 'Could not collect webview diagnostics', { error: String(error?.message || error) });
+      }
       return {
         version: app.getVersion(),
         api: { baseUrl: apiBase, clientVersion: apiVersion },
@@ -96,7 +102,7 @@ function createSettingsIpc({
         });
         if (canceled || !filePath) return { ok: false, canceled: true };
         const data = { app: 'AnimeOn Desktop', version: app.getVersion(), exportedAt: new Date().toISOString(), settings: Object.fromEntries(exportKeys.map((key) => [key, config[key]])) };
-        fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf8');
+        await writeFileAtomically(filePath, JSON.stringify(data, null, 2), { encoding: 'utf8', mode: 0o600 });
         return { ok: true, filePath };
       } catch (error) { return { ok: false, error: String(error?.message || error) }; }
     });
@@ -109,26 +115,25 @@ function createSettingsIpc({
           filters: [{ name: 'JSON', extensions: ['json'] }],
         });
         if (canceled || !filePaths?.[0]) return { ok: false, canceled: true };
-        const raw = JSON.parse(fs.readFileSync(filePaths[0], 'utf8'));
+        const raw = JSON.parse(await fs.promises.readFile(filePaths[0], 'utf8'));
         const incoming = raw?.settings && typeof raw.settings === 'object' ? raw.settings : raw;
+        if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) {
+          throw new Error('Файл не содержит объект настроек');
+        }
         const patch = {};
         for (const key of exportKeys) if (Object.prototype.hasOwnProperty.call(incoming, key)) patch[key] = incoming[key];
-        if (patch.theme && !['violet','blue','cyan','sky','indigo','emerald','green','lime','yellow','amber','orange','red','rose','pink','fuchsia','slate','gray','teal','mint','gold','coral','lavender','crimson','electric','custom'].includes(patch.theme)) delete patch.theme;
-        if (patch.site && !['cc','co'].includes(patch.site)) delete patch.site;
-        if (patch.performance && !['performance','balanced','economy'].includes(patch.performance)) delete patch.performance;
-        if (patch.closeBehavior && !['exit','tray','ask'].includes(patch.closeBehavior)) delete patch.closeBehavior;
-        for (const key of ['remember','autostart','tray','compact','confirmClose','autoRecovery','lowPower','autoHide']) if (key in patch) patch[key] = !!patch[key] || patch[key] === '1';
-        Object.assign(config, patch);
+        const safePatch = sanitizeConfigPatch(patch, config, configDefaults);
+        Object.assign(config, safePatch);
         saveConfig();
-        applySideEffects(patch);
-        if ('discordRpc' in patch) applyDiscordRpcRuntime();
+        applySideEffects(safePatch);
+        if ('discordRpc' in safePatch) applyDiscordRpcRuntime();
         return { ok: true, settings: Object.fromEntries(exportKeys.map((key) => [key, config[key]])) };
       } catch (error) { return { ok: false, error: 'Не удалось импортировать файл: ' + String(error?.message || error) }; }
     });
 
     ipcMain.handle('settings:reset', async () => {
       try {
-        const defaults = { theme:'violet', custom:'#8b5cf6', site:'co', remember:'0', notify:false, autostart:false, tray:false, compact:false, confirmClose:false, autoRecovery:true, performance:'balanced', lowPower:false, autoHide:true, closeBehavior:'ask', alwaysOnTop:false, resumeEnabled:true, autoNext:false, hotkeys:{}, customCss:{cc:'',co:''}, siteList:[{id:'one',url:'https://animeon.cc/',label:'animeon.cc'},{id:'two',url:'https://v1.animeon.co/',label:'v1.animeon.co'}], smoothSite:true, showSiteScrollbars:false, visual:{radius:18,opacity:92,blur:0,scale:100,density:100,accentGlow:70,animations:'smooth'}, profiles:{}, discordRpc:{...discordDefaults} };
+        const defaults = { theme:'violet', colorMode:'dark', titleDisplay:'brand', lastSeenVersion:'', reduceMotion:false, highContrast:false, showSplash:true, glassWindow:false, custom:'#8b5cf6', site:'co', remember:'0', notify:false, autostart:false, tray:false, compact:false, confirmClose:false, autoRecovery:true, performance:'balanced', lowPower:false, autoHide:true, closeBehavior:'ask', alwaysOnTop:false, resumeEnabled:true, autoNext:false, hotkeys:{}, customCss:{cc:'',co:''}, siteList:[{id:'one',url:'https://animeon.cc/',label:'animeon.cc'},{id:'two',url:'https://v2.animeon.co/',label:'v2.animeon.co'}], smoothSite:true, showSiteScrollbars:false, visual:{radius:18,opacity:92,blur:0,scale:100,density:100,accentGlow:70,animations:'smooth'}, profiles:{}, discordRpc:{...discordDefaults} };
         Object.assign(config, defaults);
         saveConfig();
         applySideEffects({ autostart: true, tray: true });
@@ -144,11 +149,24 @@ function createSettingsIpc({
       rememberRecentPage(url, String(item?.title || ''));
       return { ok: true, items: config.recentPages || [] };
     });
+    ipcMain.handle('pages:recent-remove', (_, value) => {
+      const url = normalizePageUrl(value);
+      if (!url) return { ok: false, error: 'bad url' };
+      config.recentPages = (config.recentPages || []).filter((entry) => {
+        const entryUrl = normalizePageUrl(typeof entry === 'string' ? entry : entry?.url);
+        return entryUrl !== url;
+      });
+      saveConfig();
+      return { ok: true, items: config.recentPages };
+    });
     ipcMain.handle('pages:favorites', () => ({ ok: true, items: config.pageFavorites || [] }));
     ipcMain.handle('pages:favorite-toggle', (_, item) => {
       const url = String(item?.url || '');
       let valid = false;
-      try { const parsed = new URL(url); valid = (parsed.protocol === 'http:' || parsed.protocol === 'https:') && /(^|\.)animeon\.(cc|co)$/i.test(parsed.hostname); } catch {}
+      try {
+        const parsed = new URL(url);
+        valid = (parsed.protocol === 'http:' || parsed.protocol === 'https:') && /(^|\.)animeon\.(cc|co)$/i.test(parsed.hostname);
+      } catch { void 0; }
       if (!valid) return { ok: false, error: 'bad url' };
       const index = (config.pageFavorites || []).findIndex((entry) => (typeof entry === 'string' ? entry : entry?.url) === url);
       if (index >= 0) config.pageFavorites.splice(index, 1);
@@ -158,11 +176,6 @@ function createSettingsIpc({
       return { ok: true, favorite: index < 0, items: config.pageFavorites };
     });
 
-    ipcMain.handle('tabs:get', (event) => {
-      const state = getWindowContext?.(event);
-      if (!state) return { ok: false, error: 'untrusted sender' };
-      return { ok: true, tabs: state.tabs || [], activeTab: state.activeTab || 0 };
-    });
     ipcMain.handle('tabs:set', (event, tabs, active = 0) => {
       const state = getWindowContext?.(event);
       if (!state) return { ok: false, error: 'untrusted sender' };
@@ -180,41 +193,45 @@ function createSettingsIpc({
       if (!siteWc || siteWc.isDestroyed()) return { ok: false };
       const value = String(text || '');
       if (!value) {
-        try { siteWc.stopFindInPage('clearSelection'); } catch {}
+        try { siteWc.stopFindInPage('clearSelection'); } catch (error) {
+          writeLog('debug', 'Could not clear site search results', { error: String(error?.message || error) });
+        }
         return { ok: true };
       }
       return { ok: true, id: siteWc.findInPage(value, { findNext: false, matchCase: false }) };
     });
     ipcMain.handle('find:stop', (event) => {
-      try { (getWindowSiteContents?.(event) || getSiteContents())?.stopFindInPage('clearSelection'); } catch {}
+      try { (getWindowSiteContents?.(event) || getSiteContents())?.stopFindInPage('clearSelection'); } catch (error) {
+        writeLog('debug', 'Could not stop site search', { error: String(error?.message || error) });
+      }
       return { ok: true };
     });
     ipcMain.handle('sleep:set', (_, minutes, action) => setSleepTimer(minutes, action));
     ipcMain.handle('sleep:get', () => config.sleepTimer);
-    ipcMain.handle('logs:get', () => {
-      try {
-        const text = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf8') : '';
-        return { ok: true, path: logPath, text: text.slice(-120000) };
-      } catch (error) { return { ok: false, error: String(error?.message || error) }; }
-    });
     ipcMain.handle('logs:open', async () => {
       try {
-        fs.mkdirSync(path.dirname(logPath), { recursive: true });
-        if (!fs.existsSync(logPath)) fs.writeFileSync(logPath, '', 'utf8');
+        await fs.promises.mkdir(path.dirname(logPath), { recursive: true });
+        const logFile = await fs.promises.open(logPath, 'a');
+        await logFile.close();
         const error = await shell.openPath(logPath);
         return { ok: !error, path: logPath, error: error || '' };
       } catch (error) { return { ok: false, path: logPath, error: String(error?.message || error) }; }
     });
-    ipcMain.handle('logs:copy', () => {
+    ipcMain.handle('logs:copy', async () => {
       try {
-        const text = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf8') : '';
+        let text = '';
+        try {
+          text = await fs.promises.readFile(logPath, 'utf8');
+        } catch (error) {
+          if (error.code !== 'ENOENT') throw error;
+        }
         clipboard.writeText(text);
         return { ok: true };
       } catch (error) { return { ok: false, error: String(error?.message || error) }; }
     });
-    ipcMain.handle('logs:clear', () => {
+    ipcMain.handle('logs:clear', async () => {
       try {
-        fs.writeFileSync(logPath, '', 'utf8');
+        await fs.promises.writeFile(logPath, '', 'utf8');
         config.errorLog = [];
         saveConfig();
         return { ok: true };
@@ -223,13 +240,19 @@ function createSettingsIpc({
     ipcMain.handle('cache:settings', (_, patch) => {
       if (patch && typeof patch === 'object') {
         if ('auto' in patch) config.autoCacheCleanup = !!patch.auto;
-        if ('limitMB' in patch) config.cacheLimitMB = Math.max(64, Math.min(16384, Number(patch.limitMB) || 512));
+        if ('limitMB' in patch) {
+          const rawLimit = String(patch.limitMB).trim();
+          const requestedLimit = rawLimit === '∞' ? 0 : Number(rawLimit);
+          config.cacheLimitMB = requestedLimit === 0
+            ? 0
+            : Math.max(64, Math.min(Number.MAX_SAFE_INTEGER, requestedLimit || 512));
+        }
         saveConfig();
       }
       return { ok: true, auto: config.autoCacheCleanup, limitMB: config.cacheLimitMB };
     });
     ipcMain.handle('cache:info', async (event) => {
-      try { return { ok: true, size: await activeSiteSession(event).getCacheSize(), limitMB: Number(config.cacheLimitMB) || 512, auto: !!config.autoCacheCleanup }; }
+      try { return { ok: true, size: await activeSiteSession(event).getCacheSize(), limitMB: Number(config.cacheLimitMB), auto: !!config.autoCacheCleanup }; }
       catch (error) { return { ok: false, error: String(error?.message || error) }; }
     });
     ipcMain.handle('memory:saver', (event, enabled) => {
@@ -237,54 +260,44 @@ function createSettingsIpc({
       saveConfig();
       const contentsList = getAllSiteContents?.(event) || [getWindowSiteContents?.(event) || getSiteContents()];
       for (const siteContents of contentsList) {
-        try { siteContents?.setBackgroundThrottling(config.memorySaver || config.performance === 'economy'); } catch {}
+        try { siteContents?.setBackgroundThrottling(config.memorySaver || config.performance === 'economy'); } catch (error) {
+          writeLog('debug', 'Could not update site background throttling', { error: String(error?.message || error) });
+        }
       }
       return { ok: true, enabled: config.memorySaver };
     });
 
     const apiCacheDir = path.join(app.getPath('userData'), 'api-cache');
-    const ensureApiCacheDir = () => { try { fs.mkdirSync(apiCacheDir, { recursive: true }); } catch {} };
-    const getApiCacheSize = () => {
-      ensureApiCacheDir();
+    const ensureApiCacheDir = () => fs.promises.mkdir(apiCacheDir, { recursive: true });
+    const getApiCacheSize = async () => {
+      await ensureApiCacheDir();
       let bytes = 0;
-      try { for (const file of fs.readdirSync(apiCacheDir)) { try { bytes += fs.statSync(path.join(apiCacheDir, file)).size; } catch {} } } catch {}
+      for (const file of await fs.promises.readdir(apiCacheDir)) {
+        const stat = await fs.promises.stat(path.join(apiCacheDir, file));
+        if (stat.isFile()) bytes += stat.size;
+      }
       return bytes;
     };
     ipcMain.handle('system:cache-info', async (event) => {
-      let sessionCache = 0;
-      try { sessionCache = await activeSiteSession(event).getCacheSize(); } catch {}
-      return { ok: true, apiCacheMB: Math.round(getApiCacheSize() / 1048576 * 10) / 10, sessionCacheMB: Math.round(sessionCache / 1048576 * 10) / 10, screenshots: fs.existsSync(screenshotsDir) ? fs.readdirSync(screenshotsDir).filter((file) => /\.png$/i.test(file)).length : 0 };
+      try {
+        const sessionCache = await activeSiteSession(event).getCacheSize();
+        const apiCacheBytes = await getApiCacheSize();
+        let screenshots = 0;
+        try {
+          screenshots = (await fs.promises.readdir(screenshotsDir)).filter((file) => /\.png$/i.test(file)).length;
+        } catch (error) {
+          if (error.code !== 'ENOENT') throw error;
+        }
+        return {
+          ok: true,
+          apiCacheMB: Math.round(apiCacheBytes / 1048576 * 10) / 10,
+          sessionCacheMB: Math.round(sessionCache / 1048576 * 10) / 10,
+          screenshots,
+        };
+      } catch (error) {
+        return { ok: false, error: String(error?.message || error) };
+      }
     });
-    ipcMain.handle('system:clear-api-cache', async () => {
-      try { ensureApiCacheDir(); for (const file of fs.readdirSync(apiCacheDir)) { try { fs.unlinkSync(path.join(apiCacheDir, file)); } catch {} } return { ok: true }; }
-      catch (error) { return { ok: false, error: String(error?.message || error) }; }
-    });
-    ipcMain.handle('system:status', async () => {
-      const metrics = app.getAppMetrics();
-      const memory = Math.round(process.memoryUsage().rss / 1048576);
-      const siteWc = getSiteContents();
-      const sitePid = siteWc && !siteWc.isDestroyed() ? siteWc.getProcessId() : 0;
-      const siteMetric = metrics.find((item) => item.pid === sitePid);
-      let api = null;
-      try { api = await apiHealth(); } catch {}
-      return { ok: true, uptime: Math.round(process.uptime()), memoryMB: memory, siteMemoryMB: siteMetric ? Math.round(siteMetric.memory.workingSetSize / 1024) : 0, api, gpu: app.getGPUFeatureStatus ? app.getGPUFeatureStatus() : {}, cache: { apiCacheMB: Math.round(getApiCacheSize() / 1048576 * 10) / 10 }, performance: config.performance, autoRecovery: config.autoRecovery !== false };
-    });
-    ipcMain.handle('profiles:get', () => ({ ok: true, profiles: config.profiles || {} }));
-    ipcMain.handle('profiles:save', (_, name, data) => {
-      const key = String(name || '').trim().slice(0, 40);
-      if (!key) return { ok: false, error: 'Пустое имя профиля' };
-      if (!config.profiles || typeof config.profiles !== 'object') config.profiles = {};
-      config.profiles[key] = { ...(data && typeof data === 'object' ? data : {}), updatedAt: Date.now() };
-      saveConfig();
-      return { ok: true, profiles: config.profiles };
-    });
-    ipcMain.handle('profiles:delete', (_, name) => {
-      const key = String(name || '');
-      if (config.profiles && Object.prototype.hasOwnProperty.call(config.profiles, key)) delete config.profiles[key];
-      saveConfig();
-      return { ok: true, profiles: config.profiles || {} };
-    });
-    ipcMain.handle('profiles:load', (_, name) => ({ ok: !!config.profiles?.[String(name || '')], profile: config.profiles?.[String(name || '')] || null }));
     ipcMain.handle('site:memory', async () => {
       try {
         const metrics = app.getAppMetrics();

@@ -1,0 +1,71 @@
+name: Windows release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Validate release tag
+        shell: pwsh
+        run: |
+          $packageVersion = node -p "require('./package.json').version"
+          $expectedTag = "v$packageVersion"
+          if ($env:GITHUB_REF_NAME -ne $expectedTag) {
+            throw "Release tag $env:GITHUB_REF_NAME does not match package version $expectedTag"
+          }
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check project
+        run: npm run check
+
+      - name: Run ESLint
+        run: npm run lint
+
+      - name: Prepare update manifest verification key
+        env:
+          UPDATE_MANIFEST_PRIVATE_KEY: ${{ secrets.UPDATE_MANIFEST_PRIVATE_KEY }}
+          UPDATE_MANIFEST_PRIVATE_KEY_PASSPHRASE: ${{ secrets.UPDATE_MANIFEST_PRIVATE_KEY_PASSPHRASE }}
+        run: node tools/create-release-manifest.js --prepare-key
+
+      - name: Build Windows installers
+        env:
+          CSC_LINK: ${{ secrets.WINDOWS_CERTIFICATE }}
+          CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: npm run dist -- --publish never
+
+      - name: Create checksums and update manifest
+        env:
+          UPDATE_MANIFEST_PRIVATE_KEY: ${{ secrets.UPDATE_MANIFEST_PRIVATE_KEY }}
+          UPDATE_MANIFEST_PRIVATE_KEY_PASSPHRASE: ${{ secrets.UPDATE_MANIFEST_PRIVATE_KEY_PASSPHRASE }}
+        run: node tools/create-release-manifest.js
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $assets = Get-ChildItem -LiteralPath dist -File |
+            Where-Object { $_.Name -match '\.exe(\.blockmap)?$' -or $_.Name -eq 'latest.yml' } |
+            Select-Object -ExpandProperty FullName
+          if (-not $assets) {
+            throw "No release assets were produced"
+          }
+          gh release create $env:GITHUB_REF_NAME --title $env:GITHUB_REF_NAME --generate-notes @assets

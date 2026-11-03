@@ -5,6 +5,7 @@ export function initAccessKeyFeature({ native, cfg, toast, askConfirmation, isFi
   const accessKeyPromptSuppress = document.getElementById('access-key-suppress-prompt');
   const accessKeySettingsStatus = document.getElementById('access-key-settings-status');
   const accessKeyPromptToggle = document.getElementById('access-key-prompt-toggle');
+  const accessKeyPromptSetting = document.querySelector('.access-key-prompt-setting');
   const accessKeySettingsCreate = document.getElementById('btn-access-key-settings-create');
   const accessKeySettingsRemove = document.getElementById('btn-access-key-settings-remove');
   const accessKeySecret = document.getElementById('access-key-secret');
@@ -231,6 +232,7 @@ async function refreshAccessKeySettings() {
     : 'Ключ доступа не установлен';
   accessKeySettingsCreate.textContent = accessKeyInfo.enabled ? 'Изменить ключ' : 'Создать ключ';
   accessKeySettingsRemove.hidden = !accessKeyInfo.enabled;
+  accessKeyPromptSetting.hidden = accessKeyInfo.enabled;
   accessKeyPromptToggle.checked = !accessKeyInfo.promptDismissed;
 }
 
@@ -319,7 +321,9 @@ accessKeySubmit?.addEventListener('click', async () => {
       }
       accessKeyInfo.enabled = false;
       accessKeyInfo.type = null;
+      accessKeyInfo.promptDismissed = false;
       cfg.accessKeyEnabled = false;
+      cfg.accessKeyPromptDismissed = false;
       refreshAccessKeySettings();
       closeAccessKeyPanel();
       toast('Ключ доступа удалён');
@@ -379,7 +383,9 @@ accessKeyConfirmSubmit?.addEventListener('click', async () => {
 native.onAccessKeyRemoved?.(() => {
   accessKeyInfo.enabled = false;
   accessKeyInfo.type = null;
+  accessKeyInfo.promptDismissed = false;
   cfg.accessKeyEnabled = false;
+  cfg.accessKeyPromptDismissed = false;
   refreshAccessKeySettings();
   reloadWebviews();
   closeAccessKeyPanel();

@@ -21,9 +21,9 @@ export function initLocalTools({ native, cfg, toast }) {
   };
 
   const seekToNote = async (note) => {
-    const current = await native.getMediaState();
+    const current = await native.media.getState();
     if (!note.url || current?.url === note.url) {
-      await native.seekTo(note.seconds);
+      await native.media.seekTo(note.seconds);
       return;
     }
     native.navigateSite(note.url);
@@ -31,10 +31,10 @@ export function initLocalTools({ native, cfg, toast }) {
     const timer = setInterval(async () => {
       attempts += 1;
       try {
-        const state = await native.getMediaState();
+        const state = await native.media.getState();
         if (state?.available && state.url === note.url) {
           clearInterval(timer);
-          await native.seekTo(note.seconds);
+          await native.media.seekTo(note.seconds);
         } else if (attempts >= 60) clearInterval(timer);
       } catch { if (attempts >= 60) clearInterval(timer); }
     }, 500);
@@ -42,13 +42,13 @@ export function initLocalTools({ native, cfg, toast }) {
 
   async function refreshNotes() {
     if (!notesList) return;
-    const result = await native.watchNotesList();
+    const result = await native.library.listNotes();
     if (!result?.ok) return;
     notesList.replaceChildren();
     if (!result.notes?.length) {
       const empty = document.createElement('p');
       empty.className = 'watch-tools-empty';
-      empty.textContent = 'Сохранённых моментов пока нет.';
+      empty.textContent = 'Заметок пока нет. Во время просмотра добавьте комментарий и сохраните момент — он запомнится с таймкодом.';
       notesList.appendChild(empty);
       return;
     }
@@ -72,7 +72,7 @@ export function initLocalTools({ native, cfg, toast }) {
       remove.setAttribute('aria-label', 'Удалить заметку');
       remove.textContent = '×';
       remove.addEventListener('click', async () => {
-        await native.deleteWatchNote(note.id);
+        await native.library.deleteNote(note.id);
         refreshNotes();
       });
       row.append(content, remove);
@@ -81,7 +81,7 @@ export function initLocalTools({ native, cfg, toast }) {
   }
 
   document.getElementById('watch-note-save')?.addEventListener('click', async () => {
-    const result = await native.addWatchNote(noteInput?.value || '');
+    const result = await native.library.addNote(noteInput?.value || '');
     if (!result?.ok) { toast(result?.error || 'Не удалось сохранить момент', 'error'); return; }
     noteInput.value = '';
     await refreshNotes();
@@ -91,7 +91,7 @@ export function initLocalTools({ native, cfg, toast }) {
     if (event.key === 'Enter') document.getElementById('watch-note-save')?.click();
   });
 
-  native.onMediaState?.(setMediaContext);
-  native.getMediaState().then(setMediaContext).catch(() => {});
+  native.media.onState?.(setMediaContext);
+  native.media.getState().then(setMediaContext).catch(() => {});
   refreshNotes();
 }

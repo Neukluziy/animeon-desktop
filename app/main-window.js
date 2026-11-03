@@ -20,8 +20,11 @@ function createMainWindowFactory({
   setTaskbarOverlay,
   applyPlaybackPreferences,
   applyVolumeToGuest,
+  onSiteMediaState,
+  markStartup,
   buildVisualCss,
   rememberRecentPage,
+  writeLog,
   TELEGRAM_RE,
   SITE_RE,
   isTrustedAuthUrl,
@@ -31,9 +34,14 @@ function createMainWindowFactory({
 }) {
 const configuredHostSessions = new WeakSet();
 const configuredSiteSessions = new WeakSet();
+const logCaughtError = (message, error, level = 'debug') => {
+  writeLog(level, message, { error: String(error?.message || error) });
+};
 function createWindow(options = {}) {
   const windowId = String(options.windowId || 'main');
-  try{ app.setAppUserModelId('co.animeon.desktop'); }catch{}
+  try { app.setAppUserModelId('co.animeon.desktop'); } catch (error) {
+    logCaughtError('Could not set the Windows application ID', error);
+  }
   const ws = loadWindowState(windowId);
   let winIcon;
   try{
@@ -41,7 +49,9 @@ function createWindow(options = {}) {
     const pngPath=path.join(appDir, '../assets', 'logo.png');
     if(fs.existsSync(icoPath)) winIcon=nativeImage.createFromPath(icoPath);
     else if(fs.existsSync(pngPath)) winIcon=nativeImage.createFromPath(pngPath);
-  }catch{}
+  } catch (error) {
+    logCaughtError('Could not load the application icon', error);
+  }
   const win = new BrowserWindow({
     width: ws.width,
     height: ws.height,
@@ -49,7 +59,8 @@ function createWindow(options = {}) {
     y: Number.isFinite(ws.y) ? ws.y : undefined,
     minWidth: 480,
     minHeight: 360,
-    backgroundColor: '#0a0a0a',
+    backgroundColor: process.platform === 'win32' && config.glassWindow && !config.lowPower ? '#00000000' : '#0a0a0a',
+    backgroundMaterial: process.platform === 'win32' && config.glassWindow && !config.lowPower ? 'acrylic' : 'none',
     frame: false,
     show: false,
     icon: winIcon || path.join(appDir, '../assets', 'logo.ico'),
@@ -67,16 +78,41 @@ function createWindow(options = {}) {
   });
   setWindow(win, windowId);
 
-  win.once('ready-to-show', () => { try{ if(winIcon && !winIcon.isEmpty()) win.setIcon(winIcon); }catch{} win.show(); });
+  win.once('ready-to-show', () => {
+    try {
+      if (winIcon && !winIcon.isEmpty()) win.setIcon(winIcon);
+    } catch (error) {
+      logCaughtError('Could not apply the window icon', error);
+    }
+    win.show();
+  });
   win.setMenuBarVisibility(false);
   win.setAlwaysOnTop(!!config.alwaysOnTop);
-  try { win.webContents.setZoomFactor(1); } catch {}
-  try { win.webContents.setVisualZoomLevelLimits(1, 1).catch(() => {}); } catch {}
+  try { win.webContents.setZoomFactor(1); } catch (error) {
+    logCaughtError('Could not set initial window zoom', error);
+  }
+  try {
+    win.webContents.setVisualZoomLevelLimits(1, 1).catch((error) => logCaughtError('Could not set visual zoom limits', error));
+  } catch (error) {
+    logCaughtError('Could not set visual zoom limits', error);
+  }
   win.webContents.once('did-finish-load', () => {
-    try { win.webContents.setZoomFactor(1); } catch {}
-    try { win.webContents.setVisualZoomLevelLimits(1, 1).catch(() => {}); } catch {}
+    try { win.webContents.setZoomFactor(1); } catch (error) {
+      logCaughtError('Could not restore window zoom', error);
+    }
+    try {
+      win.webContents.setVisualZoomLevelLimits(1, 1).catch((error) => logCaughtError('Could not restore visual zoom limits', error));
+    } catch (error) {
+      logCaughtError('Could not restore visual zoom limits', error);
+    }
   });
   win.loadFile(path.join(appDir, '../index.html'));
+  if (windowId === 'main') {
+    win.webContents.once('did-finish-load', () => markStartup?.('renderer-ready'));
+    win.webContents.on('did-attach-webview', (_event, wc) => {
+      wc.once('dom-ready', () => markStartup?.('site-ready'));
+    });
+  }
   if (ws.maximized) win.maximize();
 
   win.webContents.on('before-input-event', (e, input) => {
@@ -90,11 +126,17 @@ function createWindow(options = {}) {
       if (win.webContents.isDevToolsOpened()) { win.webContents.closeDevTools(); e.preventDefault(); return; }
       try {
         win.webContents.openDevTools({ mode: 'detach', activate: true });
-      } catch {
+      } catch (error) {
+        logCaughtError('Could not open detached DevTools; trying docked mode', error);
         try { win.webContents.openDevTools({ mode: 'right', activate: true }); }
-        catch { win.webContents.toggleDevTools(); }
+        catch (fallbackError) {
+          logCaughtError('Could not open docked DevTools; toggling as fallback', fallbackError);
+          win.webContents.toggleDevTools();
+        }
       }
-    } catch {}
+    } catch (error) {
+      logCaughtError('Could not toggle DevTools', error);
+    }
     e.preventDefault();
   });
 
@@ -104,10 +146,23 @@ function createWindow(options = {}) {
   win.webContents.on('responsive', () => {
     console.error('[AnimeOn] Главное окно снова отвечает.');
   });
+  win.webContents.on('console-message', (event) => {
+    if (event.level < 2) return;
+    writeLog(event.level === 3 ? 'error' : 'warn', 'Renderer console message', {
+      message: event.message,
+      source: event.sourceId,
+      line: event.line,
+    });
+  });
   win.webContents.on('render-process-gone', (_event, details) => {
-    console.error('[AnimeOn] Рендерер главного окна упал:', details && details.reason);
+    writeLog('error', 'Main window renderer process exited', {
+      reason: details?.reason,
+      exitCode: details?.exitCode,
+    });
     if (config.autoRecovery && win && !win.isDestroyed()) {
-      try { win.loadFile(path.join(appDir, '../index.html')); } catch {}
+      try { win.loadFile(path.join(appDir, '../index.html')); } catch (error) {
+        logCaughtError('Could not recover the main window after renderer failure', error, 'warn');
+      }
     }
   });
   let boundsSaveTimer = null;
@@ -125,6 +180,14 @@ function createWindow(options = {}) {
 
   win.on('maximize', () => win.webContents.send('win-state', true));
   win.on('unmaximize', () => win.webContents.send('win-state', false));
+  const notifyVisibility = () => win.webContents.send('app:window-visibility', {
+    hidden: !win.isVisible(),
+    minimized: win.isMinimized(),
+  });
+  win.on('show', notifyVisibility);
+  win.on('hide', notifyVisibility);
+  win.on('minimize', notifyVisibility);
+  win.on('restore', notifyVisibility);
   win.on('enter-full-screen', () => win.webContents.send('fs-state', true));
   win.on('leave-full-screen', () => win.webContents.send('fs-state', false));
 
@@ -175,15 +238,24 @@ function createWindow(options = {}) {
           if (credKey) delete headers[credKey];
           headers['Access-Control-Allow-Credentials'] = ['true'];
         }
-      } catch {}
+      } catch { void 0; }
       callback({ responseHeaders: headers });
     });
   }
 
   win.webContents.on('did-attach-webview', (_, wc) => {
     setSiteContents(wc, win.webContents);
-    try { wc.setBackgroundThrottling(!!config.memorySaver || config.performance === 'economy'); } catch {}
-    try { wc.setVisualZoomLevelLimits(1, 1).catch(() => {}); } catch {}
+    try { wc.setBackgroundThrottling(!!config.memorySaver || config.performance !== 'performance'); } catch (error) {
+      logCaughtError('Could not configure webview background throttling', error);
+    }
+    wc.on('ipc-message', (_event, channel, ...args) => {
+      if (channel === 'site:media-state') onSiteMediaState?.(wc, args[0]);
+    });
+    try {
+      wc.setVisualZoomLevelLimits(1, 1).catch((error) => logCaughtError('Could not set webview visual zoom limits', error));
+    } catch (error) {
+      logCaughtError('Could not set webview visual zoom limits', error);
+    }
     try {
       const session = wc.session;
       const ua = win.webContents.getUserAgent().replace(/\sElectron\/[\d.]+/i, '');
@@ -207,24 +279,34 @@ function createWindow(options = {}) {
               headers['Access-Control-Allow-Headers']=['Range,Origin,Accept,Content-Type,Authorization'];
               headers['Access-Control-Expose-Headers']=['Content-Length,Content-Range,Accept-Ranges'];
             }
-          } catch {}
+          } catch { void 0; }
           callback({responseHeaders:headers});
         });
       }
-    } catch {}
+    } catch (error) {
+      logCaughtError('Could not configure the attached webview session', error, 'warn');
+    }
     wc.on('render-process-gone', () => {
       setTaskbarOverlay('error');
       if (config.autoRecovery && win && !win.isDestroyed()) {
-        setTimeout(() => { try { wc.reload(); } catch {} }, 700);
+        setTimeout(() => {
+          try { wc.reload(); } catch (error) {
+            logCaughtError('Could not reload webview after renderer failure', error);
+          }
+        }, 700);
       }
     });
     wc.on('dom-ready', async () => {
-      setTimeout(() => applyPlaybackPreferences().catch(() => {}), 500);
+      setTimeout(() => applyPlaybackPreferences().catch((error) => {
+        logCaughtError('Could not apply playback preferences after navigation', error);
+      }), 500);
       try {
         await wc.executeJavaScript(`(() => {
           if (!('mediaSession' in navigator)) return false;
           const pick = () => Array.from(document.querySelectorAll('video')).find(v => !v.paused && !v.ended) || document.querySelector('video');
-          const run = (fn) => { try { const v=pick(); if(v) fn(v); } catch {} };
+          const run = (fn) => {
+            try { const v=pick(); if(v) fn(v); } catch { void 0; }
+          };
           const handlers = {
             play: () => run(v => v.play()),
             pause: () => run(v => v.pause()),
@@ -233,10 +315,14 @@ function createWindow(options = {}) {
             nexttrack: () => document.querySelector('[aria-label*="next" i],[title*="next" i],[class*="next" i]')?.click(),
             previoustrack: () => document.querySelector('[aria-label*="previous" i],[title*="previous" i],[class*="previous" i]')?.click(),
           };
-          for (const [name, fn] of Object.entries(handlers)) { try { navigator.mediaSession.setActionHandler(name, fn); } catch {} }
+          for (const [name, fn] of Object.entries(handlers)) {
+            try { navigator.mediaSession.setActionHandler(name, fn); } catch { void 0; }
+          }
           return true;
         })()`, false);
-      } catch {}
+      } catch (error) {
+        logCaughtError('Could not install media-session handlers', error);
+      }
       try {
         const css = config.customCss && typeof config.customCss === 'object' ? String(config.customCss[config.site === 'co' ? 'co' : 'cc'] || '') : '';
         const injected = `${buildVisualCss()}\n${css}`;
@@ -248,11 +334,15 @@ function createWindow(options = {}) {
             el.textContent=${JSON.stringify(injected)};
           })()`, true);
           }
-      } catch {}
+      } catch (error) {
+        logCaughtError('Could not inject site appearance styles', error);
+      }
       try {
         const imgs = await wc.executeJavaScript(`Array.from(document.images).map(i=>i.currentSrc||i.src).filter(Boolean).filter(u=>/^https?:\/\//i.test(u)).slice(0,10)`, false);
         if (Array.isArray(imgs) && imgs.length) win?.webContents.send('mirror-posters', imgs);
-      } catch {}
+      } catch (error) {
+        logCaughtError('Could not read site posters', error);
+      }
     });
     wc.on('did-frame-finish-load', () => { applyVolumeToGuest().catch(() => {}); applyPlaybackPreferences().catch(() => {}); });
     wc.on('will-navigate', (event, url) => {
@@ -263,7 +353,9 @@ function createWindow(options = {}) {
       }
       if (!SITE_RE.test(url) && !isTrustedAuthUrl(url)) {
         event.preventDefault();
-        if (/^https?:\/\//i.test(url)) shell.openExternal(url).catch?.(() => {});
+        if (/^https?:\/\//i.test(url)) shell.openExternal(url).catch?.((error) => {
+          logCaughtError('Could not open external navigation URL', error);
+        });
       }
     });
     wc.on('will-redirect', (event, url) => {
@@ -274,7 +366,9 @@ function createWindow(options = {}) {
       }
       if (!SITE_RE.test(url) && !isTrustedAuthUrl(url)) {
         event.preventDefault();
-        if (/^https?:\/\//i.test(url)) shell.openExternal(url).catch?.(() => {});
+        if (/^https?:\/\//i.test(url)) shell.openExternal(url).catch?.((error) => {
+          logCaughtError('Could not open external window URL', error);
+        });
       }
     });
     const rememberWcPage = async (url) => {
@@ -283,7 +377,11 @@ function createWindow(options = {}) {
     };
     wc.on('did-navigate', (_, url) => { rememberWcPage(url); });
     wc.on('did-navigate-in-page', (_, url) => { rememberWcPage(url); });
-    wc.on('did-finish-load', () => { try { rememberWcPage(wc.getURL()); } catch {} });
+    wc.on('did-finish-load', () => {
+      try { rememberWcPage(wc.getURL()); } catch (error) {
+        logCaughtError('Could not remember the loaded webview page', error);
+      }
+    });
     wc.setWindowOpenHandler(({ url }) => {
       if (TELEGRAM_RE.test(url)) {
         openTelegramExternal(url);
@@ -339,7 +437,9 @@ function createWindow(options = {}) {
       childWin.webContents.on('did-navigate-in-page', checkNav);
       childWin.webContents.setWindowOpenHandler(({ url }) => {
         if (TELEGRAM_RE.test(url)) {
-          shell.openExternal(url).catch?.(() => {});
+          shell.openExternal(url).catch?.((error) => {
+            logCaughtError('Could not open Telegram link', error);
+          });
           return { action: 'deny' };
         }
         if (isAuthFlowUrl(url)) return { action: 'allow' };
@@ -348,12 +448,19 @@ function createWindow(options = {}) {
           openTelegramExternal(url);
           return { action: 'deny' };
         }
-        if (/^https?:\/\//i.test(url)) { shell.openExternal(url).catch?.(() => {}); return { action: 'deny' }; }
+        if (/^https?:\/\//i.test(url)) {
+          shell.openExternal(url).catch?.((error) => logCaughtError('Could not open external child-window URL', error));
+          return { action: 'deny' };
+        }
         return { action: 'deny' };
       });
       childWin.on('closed', () => {
         if (sawAuth && !wc.isDestroyed()) {
-          setTimeout(() => { try { wc.reload(); } catch {} }, 500);
+          setTimeout(() => {
+            try { wc.reload(); } catch (error) {
+              logCaughtError('Could not reload webview after authentication', error);
+            }
+          }, 500);
         }
       });
     });
@@ -379,7 +486,18 @@ function createWindow(options = {}) {
         wc.setZoomFactor(1);
         e.preventDefault();
       }
-      else if (input.key === 'F12') { try { if (wc.isDevToolsOpened()) wc.closeDevTools(); else wc.openDevTools({ mode: 'detach', activate: true }); } catch { try { wc.toggleDevTools(); } catch {} } e.preventDefault(); }
+      else if (input.key === 'F12') {
+        try {
+          if (wc.isDevToolsOpened()) wc.closeDevTools();
+          else wc.openDevTools({ mode: 'detach', activate: true });
+        } catch (error) {
+          logCaughtError('Could not toggle webview DevTools; using fallback', error);
+          try { wc.toggleDevTools(); } catch (fallbackError) {
+            logCaughtError('Could not toggle fallback webview DevTools', fallbackError);
+          }
+        }
+        e.preventDefault();
+      }
       else if (input.alt && input.key === 'ArrowLeft') { wc.goBack(); e.preventDefault(); }
       else if (input.alt && input.key === 'ArrowRight') { wc.goForward(); e.preventDefault(); }
     });
