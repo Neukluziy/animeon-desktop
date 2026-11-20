@@ -152,7 +152,7 @@ npm run dist
 | | |
 | :-- | :-- |
 | 🌸 **Основной сайт** | [animeon.cc](https://animeon.cc) |
-| 🌐 **Для РФ** | [v2.animeon.co](https://v3.animeon.co) |
+| 🌐 **Для РФ** | [v3.animeon.co](https://v3.animeon.co) |
 | 💬 **Telegram** | [t.me/animeon](https://t.me/animeon) |
 | 👤 **Автор на AnimeOn** | [animeon.cc/user/dsizer](https://animeon.cc/user/dsizer) |
 
